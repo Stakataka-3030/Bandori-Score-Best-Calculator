@@ -336,3 +336,27 @@ p { line-height: 1.6; }
   .side-callout { background: linear-gradient(160deg, #242749, #1b1c27); }
   .searchable-select-menu { background: #1b1c27; }
 }
+
+
+/* Native Medley result layout */
+.medley-result-card { display: grid; gap: 18px; }
+.medley-maximum-card { outline: 2px solid var(--accent-border); outline-offset: 2px; }
+.medley-total-metrics { margin-top: 0; }
+.medley-song-result {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(248, 248, 252, 0.72);
+}
+.medley-song-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.medley-song-heading > div:first-child { display: grid; gap: 3px; }
+.medley-song-heading > div:first-child > span:last-child { color: var(--muted); font-size: 0.78rem; }
+.medley-song-score { display: grid; justify-items: end; gap: 2px; }
+.medley-song-score span { color: var(--muted); font-size: 0.72rem; }
+.medley-song-score strong { font-size: 1.15rem; }
+@media (max-width: 720px) {
+  .medley-song-heading { align-items: stretch; flex-direction: column; }
+  .medley-song-score { justify-items: start; }
+}

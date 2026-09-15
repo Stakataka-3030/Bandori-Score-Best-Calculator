@@ -7,9 +7,11 @@ import ActivityControls, {
 import CardPreferencesPanel from "@/components/CardPreferencesPanel";
 import SearchableSelect from "@/components/SearchableSelect";
 import TeamSearchResultCard from "@/components/TeamSearchResultCard";
+import MedleySearchResultCard from "@/components/MedleySearchResultCard";
 import {
   allowedLiveTypesForEvent,
   createBandoriSearchInput,
+  createMedleySearchInput,
   eventTypeFromBestdori,
   loadCurrentGameData,
   syncBestdoriMasters,
@@ -29,8 +31,10 @@ import {
   writeCardPreferences,
   type TeamBuilderCardPreferences,
 } from "@/lib/card-preferences";
+import type { MedleySearchInputV1 } from "@/lib/bandori/medley-foundation";
 import { importProfileFile, type ImportedProfile } from "@/lib/profile-import";
 import { runBandoriTeamSearch } from "@/search/run-team-search";
+import { runNativeMedleySearch, type MedleySearchRunResult } from "@/search/run-medley-search";
 
 type SyncState = "starting" | "ready" | "syncing" | "error";
 type SearchState = "idle" | "preparing" | "searching" | "error";
@@ -134,6 +138,10 @@ export default function App() {
 
   const [songId, setSongId] = useState<number | null>(null);
   const [difficulty, setDifficulty] = useState<BandoriTeamSearchDifficulty>("expert");
+  const [medleySong2Id, setMedleySong2Id] = useState<number | null>(null);
+  const [medleySong3Id, setMedleySong3Id] = useState<number | null>(null);
+  const [medleyDifficulty2, setMedleyDifficulty2] = useState<BandoriTeamSearchDifficulty>("expert");
+  const [medleyDifficulty3, setMedleyDifficulty3] = useState<BandoriTeamSearchDifficulty>("expert");
   const [eventId, setEventId] = useState<number | null>(null);
   const [liveType, setLiveType] = useState<BandoriTeamSearchLiveType>("free");
   const [target, setTarget] = useState<BandoriTeamSearchTarget>("score");
@@ -146,12 +154,16 @@ export default function App() {
   const [searchState, setSearchState] = useState<SearchState>("idle");
   const [searchMessage, setSearchMessage] = useState("");
   const [searchResponse, setSearchResponse] = useState<BandoriTeamSearchResponse | null>(null);
+  const [medleyInput, setMedleyInput] = useState<MedleySearchInputV1 | null>(null);
+  const [medleyResponse, setMedleyResponse] = useState<MedleySearchRunResult | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const server = profile?.profile.server ?? 3;
   const songs = useMemo(() => buildSongOptions(gameData, server), [gameData, server]);
   const events = useMemo(() => buildEventOptions(gameData, server), [gameData, server]);
   const availableDifficulties = useMemo(() => getAvailableDifficulties(gameData, songId), [gameData, songId]);
+  const medleyDifficulties2 = useMemo(() => getAvailableDifficulties(gameData, medleySong2Id), [gameData, medleySong2Id]);
+  const medleyDifficulties3 = useMemo(() => getAvailableDifficulties(gameData, medleySong3Id), [gameData, medleySong3Id]);
   const selectedEventType = useMemo<BandoriTeamSearchEventType>(() => {
     if (!gameData || eventId === null) return "none";
     const rawEvent = gameData.masters.events[String(eventId)];
@@ -206,7 +218,9 @@ export default function App() {
 
   useEffect(() => {
     if (songId === null && songs.length > 0) setSongId(songs[0].id);
-  }, [songId, songs]);
+    if (medleySong2Id === null && songs.length > 1) setMedleySong2Id(songs[1].id);
+    if (medleySong3Id === null && songs.length > 2) setMedleySong3Id(songs[2].id);
+  }, [medleySong2Id, medleySong3Id, songId, songs]);
 
   useEffect(() => {
     if (!availableDifficulties.includes(difficulty)) {
@@ -215,10 +229,23 @@ export default function App() {
   }, [availableDifficulties, difficulty]);
 
   useEffect(() => {
+    if (!medleyDifficulties2.includes(medleyDifficulty2)) {
+      setMedleyDifficulty2(medleyDifficulties2.includes("expert") ? "expert" : medleyDifficulties2[medleyDifficulties2.length - 1] ?? "expert");
+    }
+    if (!medleyDifficulties3.includes(medleyDifficulty3)) {
+      setMedleyDifficulty3(medleyDifficulties3.includes("expert") ? "expert" : medleyDifficulties3[medleyDifficulties3.length - 1] ?? "expert");
+    }
+  }, [medleyDifficulties2, medleyDifficulties3, medleyDifficulty2, medleyDifficulty3]);
+
+  useEffect(() => {
     if (!allowedLiveTypes.includes(liveType)) {
       setLiveType(allowedLiveTypes.includes("multi") ? "multi" : allowedLiveTypes[0] ?? "free");
     }
   }, [allowedLiveTypes, liveType]);
+
+  useEffect(() => {
+    if (selectedEventType === "medley" && target !== "score") setTarget("score");
+  }, [selectedEventType, target]);
 
   useEffect(() => {
     if (!profile) return;
@@ -251,6 +278,8 @@ export default function App() {
       setCardPreferences(readCardPreferences(profilePreferenceKey(imported)));
       setProfileError("");
       setSearchResponse(null);
+      setMedleyInput(null);
+      setMedleyResponse(null);
     } catch (cause) {
       setProfile(null);
       setCardPreferences(createDefaultCardPreferences());
@@ -266,8 +295,46 @@ export default function App() {
     setSearchState("preparing");
     setSearchMessage("正在读取谱面并准备候选卡…");
     setSearchResponse(null);
+    setMedleyInput(null);
+    setMedleyResponse(null);
 
     try {
+      if (selectedEventType === "medley") {
+        if (medleySong2Id === null || medleySong3Id === null) {
+          throw new Error("请选择完整的三首 Medley 歌曲");
+        }
+        const input = await createMedleySearchInput(profile, gameData, {
+          songs: [
+            { songId, difficulty },
+            { songId: medleySong2Id, difficulty: medleyDifficulty2 },
+            { songId: medleySong3Id, difficulty: medleyDifficulty3 },
+          ],
+          eventId,
+          perfectRatePercent: Math.max(0, Math.min(100, perfectRatePercent)),
+          ownedCardParameters: cardPreferences.ownedCardParameters,
+          temporaryCards: cardPreferences.temporaryCards,
+        });
+        if (controller.signal.aborted) return;
+        setMedleyInput(input);
+        setSearchState("searching");
+        setSearchMessage("正在用原生 Rust 搜索三队 Medley 最优解…");
+        const startedAt = performance.now();
+        const response = await runNativeMedleySearch(input, {
+          signal: controller.signal,
+          maxDurationMs: 30_000,
+        });
+        if (controller.signal.aborted) return;
+        setMedleyResponse(response);
+        setSearchState("idle");
+        const elapsedMs = Math.round(performance.now() - startedAt);
+        setSearchMessage(
+          response.outcome.status === "exact"
+            ? `Medley 精确搜索完成 · ${elapsedMs.toLocaleString()} ms`
+            : `Medley 搜索未穷尽（${response.outcome.reason}）· ${elapsedMs.toLocaleString()} ms`,
+        );
+        return;
+      }
+
       const externalSkills = materializeExternalSkills(eventControls.externalSkills);
       const input = await createBandoriSearchInput(profile, gameData, {
         songId,
@@ -321,7 +388,7 @@ export default function App() {
     profile
     && gameData
     && songId !== null
-    && selectedEventType !== "medley"
+    && (selectedEventType !== "medley" || (medleySong2Id !== null && medleySong3Id !== null))
     && searchState !== "preparing"
     && searchState !== "searching"
   );
@@ -399,7 +466,7 @@ export default function App() {
 
             <div className="form-grid">
               <label className="field field-wide">
-                <span>歌曲</span>
+                <span>{selectedEventType === "medley" ? "第 1 曲" : "歌曲"}</span>
                 <SearchableSelect
                   value={songId}
                   options={songs}
@@ -416,9 +483,44 @@ export default function App() {
                 </select>
               </label>
 
+              {selectedEventType === "medley" && (<>
+                <label className="field field-wide">
+                  <span>第 2 曲</span>
+                  <SearchableSelect
+                    value={medleySong2Id}
+                    options={songs}
+                    onChange={(value) => { if (value !== null) setMedleySong2Id(value); }}
+                    placeholder="搜索第 2 曲…"
+                    disabled={!gameData}
+                  />
+                </label>
+                <label className="field">
+                  <span>第 2 曲难度</span>
+                  <select value={medleyDifficulty2} onChange={(event) => setMedleyDifficulty2(event.currentTarget.value as BandoriTeamSearchDifficulty)}>
+                    {medleyDifficulties2.map((item) => <option key={item} value={item}>{DIFFICULTY_LABELS[item]}</option>)}
+                  </select>
+                </label>
+                <label className="field field-wide">
+                  <span>第 3 曲</span>
+                  <SearchableSelect
+                    value={medleySong3Id}
+                    options={songs}
+                    onChange={(value) => { if (value !== null) setMedleySong3Id(value); }}
+                    placeholder="搜索第 3 曲…"
+                    disabled={!gameData}
+                  />
+                </label>
+                <label className="field">
+                  <span>第 3 曲难度</span>
+                  <select value={medleyDifficulty3} onChange={(event) => setMedleyDifficulty3(event.currentTarget.value as BandoriTeamSearchDifficulty)}>
+                    {medleyDifficulties3.map((item) => <option key={item} value={item}>{DIFFICULTY_LABELS[item]}</option>)}
+                  </select>
+                </label>
+              </>)}
+
               <label className="field">
                 <span>目标</span>
-                <select value={target} onChange={(event) => setTarget(event.currentTarget.value as BandoriTeamSearchTarget)}>
+                <select value={target} disabled={selectedEventType === "medley"} onChange={(event) => setTarget(event.currentTarget.value as BandoriTeamSearchTarget)}>
                   <option value="score">最高期望分</option>
                   <option value="eventPoint">最高活动 Pt</option>
                 </select>
@@ -460,7 +562,7 @@ export default function App() {
 
               <label className="field">
                 <span>结果数量</span>
-                <input type="number" min="1" max="50" step="1" value={resultLimit} onChange={(event) => setResultLimit(Math.max(1, Math.min(50, Number(event.currentTarget.value))))} />
+                <input type="number" min="1" max="50" step="1" value={resultLimit} disabled={selectedEventType === "medley"} onChange={(event) => setResultLimit(Math.max(1, Math.min(50, Number(event.currentTarget.value))))} />
               </label>
             </div>
 
@@ -474,7 +576,7 @@ export default function App() {
             />
 
             {selectedEventType === "medley" && (
-              <p className="status-line status-error">Medley 是 HHWX 的独立三曲 Rust/WASM 搜索器，不是单曲活动公式的一个开关。当前客户端暂不允许用单曲结果冒充 Medley 最优解；它会作为下一块独立迁移。</p>
+              <p className="status-line">Medley 使用桌面端原生 Rust 三队搜索器：三首歌共享卡池与区域道具，并按真实 1024 RNG 路径优化每队初始五人站位。</p>
             )}
 
             <div className="search-actions">
@@ -495,6 +597,8 @@ export default function App() {
             onChange={(next) => {
               setCardPreferences(next);
               setSearchResponse(null);
+              setMedleyInput(null);
+              setMedleyResponse(null);
             }}
           />
         </div>
@@ -529,28 +633,54 @@ export default function App() {
             <span className="section-kicker">RESULTS</span>
             <h2>最优队伍</h2>
           </div>
-          {searchResponse && <span className="result-count">{searchResponse.results.length} results</span>}
+          {selectedEventType === "medley"
+            ? medleyResponse && <span className="result-count">{medleyResponse.hydration.candidates.length} candidates</span>
+            : searchResponse && <span className="result-count">{searchResponse.results.length} results</span>}
         </div>
 
-        {!searchResponse && <div className="empty-state">完成档案导入并选择歌曲后，搜索结果会显示在这里。</div>}
-        {searchResponse?.results.length === 0 && <div className="empty-state">没有找到满足条件的合法五人队伍。</div>}
-        <div className="result-list">
-          {searchResponse?.results.map((result) => (
-            <TeamSearchResultCard
-              key={`${result.rank}-${result.leaderCardId}-${result.targetValue}`}
-              result={result}
-              data={gameData}
-              profile={profile}
-              server={server}
-              eventPointSelection={{
-                liveBoostCount: eventControls.liveBoostCount,
-                challengeCpCost: eventControls.challengeCpCost,
-                placement: eventControls.resultPlacement,
-                festivalResult: eventControls.resultFestivalResult,
-              }}
-            />
-          ))}
-        </div>
+        {selectedEventType === "medley" ? (
+          <>
+            {!medleyResponse && <div className="empty-state">选择 Medley 活动与三首歌曲后，原生 Rust 搜索结果会显示在这里。</div>}
+            {medleyResponse?.hydration.candidates.length === 0 && <div className="empty-state">没有找到满足条件的三队 Medley 合法解。</div>}
+            <div className="result-list">
+              {medleyResponse && medleyInput && medleyResponse.hydration.candidates.map((candidate, index) => (
+                <MedleySearchResultCard
+                  key={`${index}-${candidate.totalAverageScore}`}
+                  candidate={candidate}
+                  rank={index + 1}
+                  input={medleyInput}
+                  data={gameData}
+                  profile={profile}
+                  preferences={cardPreferences}
+                  server={server}
+                  highlightMaximum={medleyResponse.hydration.maximumScoreCandidateIndex === index}
+                />
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            {!searchResponse && <div className="empty-state">完成档案导入并选择歌曲后，搜索结果会显示在这里。</div>}
+            {searchResponse?.results.length === 0 && <div className="empty-state">没有找到满足条件的合法五人队伍。</div>}
+            <div className="result-list">
+              {searchResponse?.results.map((result) => (
+                <TeamSearchResultCard
+                  key={`${result.rank}-${result.leaderCardId}-${result.targetValue}`}
+                  result={result}
+                  data={gameData}
+                  profile={profile}
+                  server={server}
+                  eventPointSelection={{
+                    liveBoostCount: eventControls.liveBoostCount,
+                    challengeCpCost: eventControls.challengeCpCost,
+                    placement: eventControls.resultPlacement,
+                    festivalResult: eventControls.resultFestivalResult,
+                  }}
+                />
+              ))}
+            </div>
+          </>
+        )}
       </section>
     </main>
   );
