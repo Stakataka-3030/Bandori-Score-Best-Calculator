@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import ts from "typescript";
+import * as ts from "typescript";
 
 const sourcePath = resolve("src/lib/bandori/team-builder/core/skill-shuffle.ts");
 const source = await readFile(sourcePath, "utf8");
