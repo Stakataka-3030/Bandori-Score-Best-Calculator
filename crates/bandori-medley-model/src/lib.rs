@@ -15,7 +15,8 @@ pub use input::{
 };
 pub use skill_shuffle::{
     SKILL_SHUFFLE_PATH_COUNT, SKILL_SHUFFLE_REACHABLE_ORDER_COUNT, SKILL_SHUFFLE_SIZE,
-    SKILL_SLOT_TRIGGER_WEIGHTS, WeightedSkillOrder, weighted_skill_orders,
+    SKILL_SLOT_TRIGGER_WEIGHTS, SKILL_TRIGGER_GUARD_SECONDS, WeightedSkillOrder,
+    weighted_skill_orders,
 };
 pub use validation::{ValidationCode, ValidationError};
 
