@@ -8,6 +8,7 @@ on:
       - "scripts/patch-medley-trigger-delay-reference.mjs"
       - "scripts/patch-medley-trigger-delay-exact.mjs"
       - "scripts/patch-medley-trigger-delay-upper.mjs"
+      - "scripts/patch-medley-trigger-delay-tests.mjs"
       - "crates/bandori-medley-model/src/skill_shuffle.rs"
       - "crates/bandori-medley-model/src/lib.rs"
       - ".github/workflows/apply-medley-trigger-delay.yml"
@@ -36,6 +37,7 @@ jobs:
           node scripts/patch-medley-trigger-delay-reference.mjs
           node scripts/patch-medley-trigger-delay-exact.mjs
           node scripts/patch-medley-trigger-delay-upper.mjs
+          node scripts/patch-medley-trigger-delay-tests.mjs
       - name: Format Rust
         run: cargo fmt --all
       - name: Test Medley crates
