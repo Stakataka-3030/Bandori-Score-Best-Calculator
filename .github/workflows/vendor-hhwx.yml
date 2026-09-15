@@ -1,0 +1,36 @@
+name: Vendor HHWX search baseline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/vendor-hhwx.mjs
+      - .github/workflows/vendor-hhwx.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  vendor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Vendor pinned HHWX files
+        run: node scripts/vendor-hhwx.mjs
+      - name: Commit vendored baseline
+        run: |
+          if git diff --quiet; then
+            echo "Vendored files already match pinned HHWX baseline."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/bandori-area-item-groups.ts src/lib/bandori-team-calculator.ts src/lib/bandori/team-builder/core src/lib/bandori/team-builder/single
+          git commit -m "Vendor pinned HHWX single-song search baseline"
+          git push
