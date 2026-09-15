@@ -60,20 +60,30 @@ function buildSkillOptions(data: GameDataGeneration | null, server: number): Sea
 }
 
 export function materializeExternalSkills(drafts: readonly ExternalSkillDraft[]): BandoriTeamSearchExternalSkill[] {
-  return drafts.flatMap((draft) => (
-    draft.skillId && draft.skillId > 0
-      ? [{ skillId: draft.skillId, skillLevel: Math.min(5, Math.max(1, Math.trunc(draft.skillLevel))) }]
-      : []
-  ));
+  const lastSpecified = drafts.reduce((last, draft, index) => (
+    draft.skillId && draft.skillId > 0 ? index : last
+  ), -1);
+  if (lastSpecified < 0) return [];
+  // Keep positional meaning when a middle slot is intentionally empty. Skill ID 0 resolves
+  // to a neutral/null skill in the HHWX core, so OTHER 3 never shifts into OTHER 2.
+  return drafts.slice(0, lastSpecified + 1).map((draft) => ({
+    skillId: draft.skillId && draft.skillId > 0 ? draft.skillId : 0,
+    skillLevel: Math.min(5, Math.max(1, Math.trunc(draft.skillLevel))),
+  }));
 }
 
 export const DEFAULT_EVENT_CONTROL_STATE: EventControlState = {
-  // HHWX current calculator uses V3, 3 boosts and 1600 CP by default.
+  // These match the current HHWX Team Builder defaults.
   eventFormula: 2,
   liveBoostCount: 3,
   challengeCpCost: 1600,
   otherPlayersAveragePower: 380_000,
-  externalSkills: Array.from({ length: 4 }, () => ({ skillId: null, skillLevel: 5 })),
+  externalSkills: [
+    { skillId: 69, skillLevel: 5 },
+    { skillId: 69, skillLevel: 1 },
+    { skillId: 66, skillLevel: 5 },
+    { skillId: 66, skillLevel: 1 },
+  ],
   encoreSkillSource: "self",
   useSpecialRoomBonus: true,
   resultPlacement: 1,
