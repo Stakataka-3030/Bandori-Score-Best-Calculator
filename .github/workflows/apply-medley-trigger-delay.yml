@@ -42,11 +42,21 @@ jobs:
           node scripts/patch-medley-trigger-delay-tests.mjs
       - name: Format Rust
         run: cargo fmt --all
-      - name: Test Medley crates
-        run: |
-          cargo test -p bandori-medley-model
-          cargo test -p bandori-medley-reference
-          cargo test -p bandori-medley-search
+      - name: Test Medley model
+        timeout-minutes: 5
+        run: cargo test -p bandori-medley-model
+      - name: Test Medley reference
+        timeout-minutes: 5
+        run: cargo test -p bandori-medley-reference
+      - name: Test Medley search library
+        timeout-minutes: 5
+        run: cargo test -p bandori-medley-search --lib
+      - name: Test Medley tiny exact oracle
+        timeout-minutes: 5
+        run: cargo test -p bandori-medley-search --test tiny_exact_search
+      - name: Test Medley real-profile harness
+        timeout-minutes: 5
+        run: cargo test -p bandori-medley-search --test real_profile_acceptance
       - name: Commit tested Rust changes
         shell: bash
         run: |
