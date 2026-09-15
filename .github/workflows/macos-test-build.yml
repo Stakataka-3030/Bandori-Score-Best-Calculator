@@ -1,0 +1,77 @@
+name: macOS Apple Silicon test build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.ts"
+      - ".github/workflows/macos-test-build.yml"
+
+jobs:
+  build-macos-arm64:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Verify shuffle model
+        run: npm run test:shuffle
+
+      - name: Build Apple Silicon app bundle
+        run: npm run tauri:build -- --bundles app
+
+      - name: Ad-hoc sign and package test client
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          if [[ -z "$APP_PATH" ]]; then
+            echo "No macOS .app bundle found" >&2
+            exit 1
+          fi
+
+          echo "Packaging: $APP_PATH"
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" \
+            Bandori-Score-Best-Calculator-macOS-arm64.app.zip
+
+          hdiutil create \
+            -volname "Bandori Score Best Calculator" \
+            -srcfolder "$APP_PATH" \
+            -ov \
+            -format UDZO \
+            Bandori-Score-Best-Calculator-macOS-arm64.dmg
+
+          shasum -a 256 \
+            Bandori-Score-Best-Calculator-macOS-arm64.app.zip \
+            Bandori-Score-Best-Calculator-macOS-arm64.dmg \
+            > SHA256SUMS.txt
+
+      - name: Upload macOS test client
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bandori-Score-Best-Calculator-macOS-arm64
+          path: |
+            Bandori-Score-Best-Calculator-macOS-arm64.app.zip
+            Bandori-Score-Best-Calculator-macOS-arm64.dmg
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
