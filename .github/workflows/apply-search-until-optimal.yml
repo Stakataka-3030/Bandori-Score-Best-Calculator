@@ -1,0 +1,49 @@
+name: Apply 30-minute optimal search option
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/apply-search-until-optimal-option.mjs"
+      - ".github/workflows/apply-search-until-optimal.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-search-until-optimal-main
+  cancel-in-progress: true
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply search option patch
+        run: node scripts/apply-search-until-optimal-option.mjs
+      - name: Install dependencies
+        run: npm install --package-lock=false
+      - name: Verify score regressions and frontend build
+        run: npm run build
+      - name: Commit tested search option
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed_paths=(src/App.tsx src/styles.css)
+          if [[ -z "$(git status --porcelain -- "${changed_paths[@]}")" ]]; then
+            echo "Optimal-search option already applied."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${changed_paths[@]}"
+          git commit -m "Add 30-minute search-until-optimal option"
+          git pull --rebase origin main
+          git push origin HEAD:main
