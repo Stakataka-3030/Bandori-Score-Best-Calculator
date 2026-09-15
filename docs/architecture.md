@@ -2,7 +2,9 @@
 
 ## Distribution target
 
-The primary distribution artifact is a single self-contained HTML file built from a modular React + TypeScript + Vite source tree. Native wrappers such as Tauri may be added later without changing the search/scoring/profile layers.
+The primary distribution artifact is a **pure-client Tauri 2 desktop application** built from React + TypeScript + Vite with a thin Rust shell. The application does not require any project-operated server, database, reverse proxy, GitHub Pages deployment, or hosted API.
+
+The Tauri HTTP plugin is used for direct public Bestdori synchronization through the Rust backend. Its URL scope must stay narrowly allowlisted to the Bestdori public origins required by the data provider. Browser-only / single-HTML distribution is not a current project goal.
 
 ## Product goal
 
@@ -16,7 +18,7 @@ The true in-game first-five skill shuffle is position-dependent and non-uniform.
 
 The application accepts user-supplied Bestdori-compatible JSON files, including the optional HHWX `hhwx-profile-v1` extension. It does not query players by UID and does not implement HHWX user-fetcher, game sessions, account synchronization, Bilibili sessions, or unofficial game-account access.
 
-Bestdori synchronization is limited to public master/chart data required for gameplay calculations and optional presentation resources. Player data remains local and user-supplied.
+Bestdori synchronization is limited to **public master/chart data required for gameplay calculations and optional public presentation resources**. Player data remains local and user-supplied.
 
 ## HHWX-derived baseline
 
@@ -66,9 +68,22 @@ For team search, initial card slot matters. A selected five-card set must theref
 
 ## Bestdori data synchronization
 
-The project should maintain current public gameplay data independently of HHWX production infrastructure. Build/update tooling should synchronize the public Bestdori datasets needed by the calculator, including cards, skills, characters/bands, area items, songs, charts and events. Optional artwork (card images, event banners, jackets) is presentation-only and must not be required for calculation.
+The desktop client updates itself directly from public Bestdori data; there is no project-operated synchronization server.
 
-The portable HTML may embed a current compact master-data snapshot and should also support importing a newer compatible data pack. Player profiles are never fetched by UID.
+The updater must:
+
+1. start immediately from the latest validated local generation (or the embedded release snapshot on first launch);
+2. check Bestdori in the background through `@tauri-apps/plugin-http` / its Rust backend;
+3. download master datasets to a temporary generation;
+4. validate JSON shape, required references and conservative size limits before activation;
+5. hash the validated files and atomically switch the active generation only when the complete update succeeds;
+6. retain the previous known-good generation so a broken or partial upstream update cannot brick the calculator;
+7. fetch chart JSON lazily for selected songs/difficulties and cache it locally;
+8. treat artwork as optional presentation data which may be lazy-cached separately and must never be required for calculation.
+
+Required gameplay datasets include at least cards, skills, characters/bands, area items, songs, events and score charts. Update frequency is a client policy, not a release policy: users should not need to download a new application merely because weekly game data changed.
+
+The Bestdori provider must be isolated behind a normalized data-provider interface so an upstream schema or host change does not touch team-search/scoring code.
 
 ## Intentionally not imported
 
@@ -77,6 +92,7 @@ The portable HTML may embed a current compact master-data snapshot and should al
 - HHWX private ingestion/mirroring services.
 - Next.js routing/server infrastructure.
 - Unrelated HHWX site features outside the Bandori calculator/search dependency closure.
+- Any application-owned online backend solely for routine Bestdori synchronization.
 
 ## UI direction
 
