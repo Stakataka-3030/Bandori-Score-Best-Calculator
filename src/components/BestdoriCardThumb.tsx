@@ -28,7 +28,12 @@ function buildThumbUrl(
   type: "normal" | "after_training",
 ): string {
   const serverCode = SERVER_CODES[server as 0 | 1 | 2 | 3] ?? "jp";
-  return `https://bestdori.com/assets/${serverCode}/thumb/chara/card${String(cardId).padStart(5, "0")}_rip/${resourceSetName}_${type}.png`;
+  // Bestdori groups card thumbnails into bundles of 50 card IDs. For example,
+  // card 1234 lives under card00024_rip rather than card01234_rip.
+  const bundleIndex = Math.floor(Math.max(0, Math.trunc(cardId)) / 50)
+    .toString()
+    .padStart(5, "0");
+  return `https://bestdori.com/assets/${serverCode}/thumb/chara/card${bundleIndex}_rip/${resourceSetName}_${type}.png`;
 }
 
 export default function BestdoriCardThumb({
