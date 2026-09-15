@@ -7,4 +7,4 @@ source = source
   .replace("${(result.pointBonusRate * 100).toFixed(0)}", "\\${(result.pointBonusRate * 100).toFixed(0)}")
   .replace("${result.eventPointMultiplier}", "\\${result.eventPointMultiplier}");
 fs.writeFileSync(patchPath, source);
-await import("./apply-compact-jp-ui.mjs?fixed=1");
+await import("./apply-compact-jp-ui.mjs?fixed=2");
