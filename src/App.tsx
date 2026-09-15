@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import ActivityControls, {
   DEFAULT_EVENT_CONTROL_STATE,
   materializeExternalSkills,
@@ -272,21 +273,36 @@ export default function App() {
     }
   }
 
+  function applyImportedProfile(parsed: unknown) {
+    const imported = importProfileFile(parsed);
+    setProfile(imported);
+    setCardPreferences(readCardPreferences(profilePreferenceKey(imported)));
+    setProfileError("");
+    setSearchResponse(null);
+    setLastSkillTriggerTimes(null);
+    setMedleyInput(null);
+    setMedleyResponse(null);
+  }
+
   async function importProfile(file: File) {
     try {
-      const parsed = JSON.parse(await file.text());
-      const imported = importProfileFile(parsed);
-      setProfile(imported);
-      setCardPreferences(readCardPreferences(profilePreferenceKey(imported)));
-      setProfileError("");
-      setSearchResponse(null);
-      setLastSkillTriggerTimes(null);
-      setMedleyInput(null);
-      setMedleyResponse(null);
+      applyImportedProfile(JSON.parse(await file.text()));
     } catch (cause) {
       setProfile(null);
       setCardPreferences(createDefaultCardPreferences());
       setProfileError(cause instanceof Error ? cause.message : "无法读取档案");
+    }
+  }
+
+  async function importProfileFromClipboard() {
+    try {
+      const text = await readText();
+      if (!text.trim()) {
+        throw new Error("剪贴板中没有可读取的 JSON 文本");
+      }
+      applyImportedProfile(JSON.parse(text));
+    } catch (cause) {
+      setProfileError(cause instanceof Error ? cause.message : "无法从剪贴板读取档案");
     }
   }
 
@@ -437,17 +453,22 @@ export default function App() {
                 <span className="section-kicker">档案</span>
                 <h2>玩家档案</h2>
               </div>
-              <label className="primary-button file-button">
-                导入 JSON
-                <input
-                  type="file"
-                  accept="application/json,.json"
-                  onChange={(event) => {
-                    const file = event.currentTarget.files?.[0];
-                    if (file) void importProfile(file);
-                  }}
-                />
-              </label>
+              <div className="profile-import-actions">
+                <button type="button" className="ghost-button" onClick={() => void importProfileFromClipboard()}>
+                  从剪贴板读取
+                </button>
+                <label className="primary-button file-button">
+                  导入 JSON
+                  <input
+                    type="file"
+                    accept="application/json,.json"
+                    onChange={(event) => {
+                      const file = event.currentTarget.files?.[0];
+                      if (file) void importProfile(file);
+                    }}
+                  />
+                </label>
+              </div>
             </div>
             {profile ? (
               <div className="profile-summary">

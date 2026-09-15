@@ -115,6 +115,7 @@ fn cancel_medley_search(request_id: String) -> Result<bool, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![run_medley_search, cancel_medley_search])
         .run(tauri::generate_context!())
         .expect("error while running Bandori Score Best Calculator");

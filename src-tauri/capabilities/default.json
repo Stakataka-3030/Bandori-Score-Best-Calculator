@@ -2,14 +2,19 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default desktop capability set",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     {
       "identifier": "http:default",
       "allow": [
-        { "url": "https://bestdori.com/**" }
+        {
+          "url": "https://bestdori.com/**"
+        }
       ]
-    }
+    },
+    "clipboard-manager:allow-read-text"
   ]
 }

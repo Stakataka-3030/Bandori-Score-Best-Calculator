@@ -441,3 +441,10 @@ p { line-height: 1.6; }
     grid-column: 1 / -1;
   }
 }
+
+.profile-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
