@@ -61,9 +61,36 @@ function toUserAreaItems(profile: ImportedProfile): BandoriUserAreaItemState[] {
   return result;
 }
 
-function toCharacterBonus(bonus: ImportedCharacterBonus): BandoriCharacterBonusState {
+function hasDetailedCharacterBonus(bonus: ImportedCharacterBonus): boolean {
+  const potential = bonus.potential;
   const collection = bonus.mission.collection;
   const training = bonus.mission.training;
+  return (
+    potential.performance !== potential.technique
+    || potential.performance !== potential.visual
+    || collection.performance !== collection.technique
+    || collection.performance !== collection.visual
+    || training.performance !== training.technique
+    || training.performance !== training.visual
+  );
+}
+
+function toCharacterBonus(
+  bonus: ImportedCharacterBonus,
+  roundingMode: "combined" | "split-by-type",
+): BandoriCharacterBonusState {
+  // HHWX profile mission values are stored in tenths of a percent. The core calculator
+  // expects actual percentage points, so e.g. 40 in the profile means 4%, not 40%.
+  const collection = {
+    performance: bonus.mission.collection.performance / 10,
+    technique: bonus.mission.collection.technique / 10,
+    visual: bonus.mission.collection.visual / 10,
+  };
+  const training = {
+    performance: bonus.mission.training.performance / 10,
+    technique: bonus.mission.training.technique / 10,
+    visual: bonus.mission.training.visual / 10,
+  };
   return {
     characterId: bonus.characterId,
     potential: bonus.potential,
@@ -76,12 +103,17 @@ function toCharacterBonus(bonus: ImportedCharacterBonus): BandoriCharacterBonusS
       collection,
       training,
     },
-    missionBonusRoundingMode: "split-by-type",
+    missionBonusRoundingMode: roundingMode,
   };
 }
 
 function toCharacterBonuses(profile: ImportedProfile): BandoriCharacterBonusState[] {
-  return profile.characterBonuses.map(toCharacterBonus);
+  // Match HHWX's rounding behavior: detailed per-parameter profiles combine mission
+  // percentages before flooring; legacy/equal profiles retain split-by-type rounding.
+  const roundingMode = profile.characterBonuses.some(hasDetailedCharacterBonus)
+    ? "combined"
+    : "split-by-type";
+  return profile.characterBonuses.map((bonus) => toCharacterBonus(bonus, roundingMode));
 }
 
 export function eventTypeFromBestdori(value: unknown): BandoriTeamSearchEventType {
