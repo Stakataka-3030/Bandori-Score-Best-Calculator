@@ -60,11 +60,19 @@ function calculateScheduledSkillContribution(
   chart: PreparedChart,
   skill: ResolvedBandoriSkill | null | undefined,
   startTimeSeconds: number,
+  activationIndex: number,
   innerScores: Int32Array,
   perfectRate: number,
 ): number {
   if (!skill || skill.scoreEffects.length === 0) return 0;
-  const start = getFirstNoteAfterTime(chart, startTimeSeconds);
+  const nominalStart = chart.skillTriggerTimes[activationIndex];
+  // Preserve the chart's trigger-entity ordering when an activation was not
+  // delayed: notes after the trigger entity at the same timestamp receive the
+  // skill. A delayed activation has no trigger entity at its new timestamp, so
+  // it starts strictly after that timestamp.
+  const start = nominalStart !== undefined && Math.abs(startTimeSeconds - nominalStart) <= 1e-9
+    ? chart.skillStartNotes[activationIndex] ?? chart.notesCount
+    : getFirstNoteAfterTime(chart, startTimeSeconds);
   const end = getFirstNoteAfterSkillEnd(chart, startTimeSeconds, skill.durationSeconds);
   if (start >= end) return 0;
 
@@ -107,15 +115,20 @@ function calculateBestScheduledSoloScore(
   const contributionCache = new Map<string, number>();
   const sequenceScoreCache = new Map<string, number>();
 
-  const contributionAt = (skill: ResolvedBandoriSkill | null | undefined, startTime: number): number => {
+  const contributionAt = (
+    skill: ResolvedBandoriSkill | null | undefined,
+    startTime: number,
+    activationIndex: number,
+  ): number => {
     if (!skill || skill.scoreEffects.length === 0) return 0;
-    const key = skill.cacheKey + "@" + startTime.toPrecision(15);
+    const key = skill.cacheKey + "@" + activationIndex + ":" + startTime.toPrecision(15);
     const cached = contributionCache.get(key);
     if (cached !== undefined) return cached;
     const contribution = calculateScheduledSkillContribution(
       chart,
       skill,
       startTime,
+      activationIndex,
       innerScoreResult.scores,
       perfectRate,
     );
@@ -136,7 +149,11 @@ function calculateBestScheduledSoloScore(
     const scheduled = scheduleBandoriSkillTriggerTimes(nominalTriggerTimes, durations);
     let score = baseScore;
     for (let activation = 0; activation < 6; activation += 1) {
-      score += contributionAt(activationSkills[activation], scheduled.starts[activation]);
+      score += contributionAt(
+        activationSkills[activation],
+        scheduled.starts[activation],
+        activation,
+      );
     }
     sequenceScoreCache.set(key, score);
     return score;
