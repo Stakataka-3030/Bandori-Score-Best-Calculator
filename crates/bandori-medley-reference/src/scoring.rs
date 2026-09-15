@@ -1,13 +1,12 @@
 use bandori_medley_model::{
     ExactProbabilityV1, FixedMedleyEvaluationInputV1, FixedTeamV1, MedleySongV1,
-    ResolvedScoreSkillV1, SCORING_RULES_VERSION, SkillBehaviorV1,
+    ResolvedScoreSkillV1, SCORING_RULES_VERSION, SKILL_SHUFFLE_PATH_COUNT, SkillBehaviorV1,
+    weighted_skill_orders,
 };
 use serde::Serialize;
 
 use crate::error::{ScoreError, ScoreErrorCode};
-use crate::permutations::skill_orders;
-
-const SKILL_ORDER_COUNT: u16 = 120;
+const SKILL_ORDER_COUNT: u16 = SKILL_SHUFFLE_PATH_COUNT;
 const PERFECT_RATE: f64 = 1.1;
 const GREAT_RATE: f64 = 0.8;
 
@@ -367,26 +366,46 @@ fn score_song(
         .map(|score| i128::from(*score))
         .sum();
     let trigger_indexes = skill_trigger_indexes(song)?;
-    let orders = skill_orders();
-    let mut permutation_expected_score_bits = Vec::with_capacity(orders.len());
+    let mut permutation_expected_score_bits =
+        Vec::with_capacity(usize::from(SKILL_SHUFFLE_PATH_COUNT));
     let mut average_accumulator = 0_i128;
-    for order in orders {
+    for weighted_order in weighted_skill_orders() {
         let score = score_one_order(
             input,
             song,
             team,
             &trigger_indexes,
-            order,
+            weighted_order.permutation,
             &base_note_scores,
             perfect_rate,
         )?;
-        average_accumulator += score;
-        permutation_expected_score_bits.push(F64BitsV1::from_f64(score as f64));
+        average_accumulator = average_accumulator
+            .checked_add(
+                score
+                    .checked_mul(i128::from(weighted_order.weight))
+                    .ok_or_else(|| {
+                        ScoreError::new(
+                            ScoreErrorCode::ArithmeticOverflow,
+                            format!("songs[{}].skillShuffle", song.slot),
+                            "weighted skill score overflowed i128",
+                        )
+                    })?,
+            )
+            .ok_or_else(|| {
+                ScoreError::new(
+                    ScoreErrorCode::ArithmeticOverflow,
+                    format!("songs[{}].skillShuffle", song.slot),
+                    "weighted skill score sum overflowed i128",
+                )
+            })?;
+        let bits = F64BitsV1::from_f64(score as f64);
+        for _ in 0..weighted_order.weight {
+            permutation_expected_score_bits.push(bits);
+        }
     }
-    // Independent windows make the 120-order integer sum divisible by 24.
-    // Reduce before the only integer-to-f64 conversion, as production does.
-    // Settle each song before its score enters the medley sum.
-    let average_score = ((average_accumulator / 24) as f64 / 5.0).floor();
+    // Every entry above now represents one of the 1024 equally likely Unity RNG
+    // paths, so the expected score is their weighted arithmetic mean.
+    let average_score = (average_accumulator as f64 / f64::from(SKILL_SHUFFLE_PATH_COUNT)).floor();
 
     Ok(SongScoreTraceV1 {
         slot: song.slot,
@@ -470,7 +489,10 @@ mod tests {
         for (song, expected) in first.songs.iter().zip([175_410.0, 175_410.0, 175_701.0]) {
             let expected_bits = F64BitsV1::from_f64(expected);
             assert_eq!(song.average_score_bits, expected_bits);
-            assert_eq!(song.permutation_expected_score_bits.len(), 120);
+            assert_eq!(
+                song.permutation_expected_score_bits.len(),
+                usize::from(SKILL_SHUFFLE_PATH_COUNT)
+            );
             assert!(
                 song.permutation_expected_score_bits
                     .iter()

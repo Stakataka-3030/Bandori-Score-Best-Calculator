@@ -184,6 +184,35 @@ fn members_with_leader(team: [u32; 5], leader_position: usize) -> [u32; 5] {
     [others[0], others[1], leader, others[2], others[3]]
 }
 
+fn member_layouts(team: [u32; 5]) -> Vec<[u32; 5]> {
+    fn visit(
+        depth: usize,
+        team: [u32; 5],
+        layout: &mut [u32; 5],
+        used: &mut [bool; 5],
+        result: &mut Vec<[u32; 5]>,
+    ) {
+        if depth == 5 {
+            result.push(*layout);
+            return;
+        }
+        for index in 0..5 {
+            if used[index] {
+                continue;
+            }
+            used[index] = true;
+            layout[depth] = team[index];
+            visit(depth + 1, team, layout, used, result);
+            used[index] = false;
+        }
+    }
+
+    let mut result = Vec::with_capacity(120);
+    visit(0, team, &mut [0; 5], &mut [false; 5], &mut result);
+    assert_eq!(result.len(), 120);
+    result
+}
+
 fn parameter_sum(parameter: [f64; 3]) -> f64 {
     (parameter[0] + parameter[1]) + parameter[2]
 }
@@ -249,12 +278,12 @@ fn resolved_team_skill(
 fn fixed_input(
     input: &MedleySearchInputV1,
     configuration: &AreaItemConfigurationV1,
-    teams: [[u32; 5]; 3],
-    leader_positions: [usize; 3],
+    ordered_source_teams: [[u32; 5]; 3],
 ) -> FixedMedleyEvaluationInputV1 {
-    let ordered_source_teams: [[u32; 5]; 3] =
-        std::array::from_fn(|slot| members_with_leader(teams[slot], leader_positions[slot]));
-    let mut source_instance_ids = teams.into_iter().flatten().collect::<Vec<_>>();
+    let mut source_instance_ids = ordered_source_teams
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     source_instance_ids.sort_unstable();
     source_instance_ids.dedup();
     assert_eq!(
@@ -283,7 +312,7 @@ fn fixed_input(
             }
         })
         .collect::<Vec<_>>();
-    for team in teams {
+    for team in ordered_source_teams {
         for source_id in team {
             cards[local_id(source_id) as usize].skill = resolved_team_skill(input, team, source_id);
         }
@@ -351,7 +380,7 @@ struct ReferenceTeam {
     member_set: [u32; 5],
     member_mask: u128,
     song_scores: [f64; 3],
-    leaders: [u32; 3],
+    song_member_orders: [[u32; 5]; 3],
 }
 
 fn member_mask(members: [u32; 5]) -> u128 {
@@ -391,43 +420,35 @@ fn reference_teams(
             // The fixed reference scorer requires exactly three disjoint teams.
             // Filler-team membership cannot affect the target song's team score.
             let fillers = disjoint_fillers(member_set, &member_sets);
-            let mut leader_scores = [[f64::NAN; 3]; 5];
+            let layouts = member_layouts(member_set);
+            let mut song_scores = [f64::NEG_INFINITY; 3];
+            let mut song_member_orders = [[0_u32; 5]; 3];
             for song_slot in 0..3 {
-                let mut teams = [fillers[0], fillers[1], member_set];
-                teams.swap(song_slot, 2);
-                for (leader_position, scores) in leader_scores.iter_mut().enumerate() {
-                    let mut leader_positions = [0; 3];
-                    leader_positions[song_slot] = leader_position;
-                    let trace = evaluate_fixed_medley(&fixed_input(
-                        input,
-                        configuration,
-                        teams,
-                        leader_positions,
-                    ))
-                    .expect("tiny fixed medley must score in the independent reference");
-                    scores[song_slot] = trace.songs[song_slot].average_score();
-                }
-            }
-
-            let mut song_scores = [0.0_f64; 3];
-            let mut leaders = [0_u32; 3];
-            for song_slot in 0..3 {
-                let mut best_leader = 0;
-                for leader_position in 1..5 {
-                    if leader_scores[leader_position][song_slot]
-                        > leader_scores[best_leader][song_slot]
+                for &layout in &layouts {
+                    let mut ordered_teams = [
+                        members_with_leader(fillers[0], 0),
+                        members_with_leader(fillers[1], 0),
+                        layout,
+                    ];
+                    ordered_teams.swap(song_slot, 2);
+                    let trace =
+                        evaluate_fixed_medley(&fixed_input(input, configuration, ordered_teams))
+                            .expect("tiny fixed medley must score in the independent reference");
+                    let score = trace.songs[song_slot].average_score();
+                    if score > song_scores[song_slot]
+                        || (score == song_scores[song_slot]
+                            && layout < song_member_orders[song_slot])
                     {
-                        best_leader = leader_position;
+                        song_scores[song_slot] = score;
+                        song_member_orders[song_slot] = layout;
                     }
                 }
-                song_scores[song_slot] = leader_scores[best_leader][song_slot];
-                leaders[song_slot] = member_set[best_leader];
             }
             ReferenceTeam {
                 member_set,
                 member_mask: member_mask(member_set),
                 song_scores,
-                leaders,
+                song_member_orders,
             }
         })
         .collect()
@@ -479,16 +500,7 @@ fn exhaustive_reference(input: &MedleySearchInputV1) -> MedleySearchSolutionV1 {
                     let selected = [first, second, third];
                     let output_teams = std::array::from_fn(|slot| MedleySearchTeamV1 {
                         slot: u8::try_from(slot).expect("three team slots fit u8"),
-                        member_instance_ids: members_with_leader(
-                            selected[slot].member_set,
-                            selected[slot]
-                                .member_set
-                                .iter()
-                                .position(|instance_id| {
-                                    *instance_id == selected[slot].leaders[slot]
-                                })
-                                .expect("reference leader belongs to its team"),
-                        ),
+                        member_instance_ids: selected[slot].song_member_orders[slot],
                         average_score: selected[slot].song_scores[slot],
                     });
                     let solution = MedleySearchSolutionV1 {

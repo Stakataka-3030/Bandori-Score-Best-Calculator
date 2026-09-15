@@ -10,7 +10,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use bandori_medley_model::ResolvedScoreSkillV1;
+use bandori_medley_model::{
+    ResolvedScoreSkillV1, SKILL_SHUFFLE_PATH_COUNT, SKILL_SLOT_TRIGGER_WEIGHTS,
+};
 
 use crate::candidate::member_order_for_leader;
 use crate::exact_score::exact_probability_to_f64;
@@ -277,14 +279,30 @@ impl<'a> FastScoreModel<'a> {
                 let delta = skill_delta(skill, perfect_rate, judgment_multiplier, power_range)?;
                 maximum_delta = maximum_delta.max(delta);
                 for slot in 0..3 {
-                    let first_sum = coverage[slot][..5]
-                        .iter()
-                        .try_fold(0.0, |sum, alpha| add_up(sum, *alpha))?;
+                    // The card's original slot is not fixed at a partial-search node.
+                    // Relax it independently to whichever initial slot gives this card the
+                    // largest real-shuffle expectation. This can overestimate a complete
+                    // team's jointly feasible placement, which is exactly what a safe upper
+                    // bound needs; it can never prune the true optimum.
+                    let mut best_first_five_coverage = 0.0_f64;
+                    for initial_slot in 0..5 {
+                        let mut weighted_coverage = 0.0_f64;
+                        for trigger in 0..5 {
+                            weighted_coverage = add_up(
+                                weighted_coverage,
+                                mul_up(
+                                    coverage[slot][trigger],
+                                    f64::from(SKILL_SLOT_TRIGGER_WEIGHTS[initial_slot][trigger]),
+                                )?,
+                            )?;
+                        }
+                        let expected_coverage =
+                            div_up(weighted_coverage, f64::from(SKILL_SHUFFLE_PATH_COUNT))?;
+                        best_first_five_coverage = best_first_five_coverage.max(expected_coverage);
+                    }
                     contributions[card.instance_id as usize][context_index][slot] =
                         SkillContribution {
-                            // Every card occupies each of the first five positions
-                            // in 24 of the 120 orders: the coefficient is sum/5.
-                            first_five: mul_up(div_up(first_sum, 5.0)?, delta)?,
+                            first_five: mul_up(best_first_five_coverage, delta)?,
                             leader: mul_up(coverage[slot][5], delta)?,
                         };
                 }
@@ -1659,8 +1677,8 @@ mod tests {
                             evaluate_candidate(
                                 &input,
                                 &input.area_configurations[0],
-                                members,
                                 &songs,
+                                members,
                             )
                             .unwrap()
                         })

@@ -65,12 +65,18 @@ fn enumerate_orders() -> Vec<WeightedSkillOrder> {
     visit(0, [0, 1, 2, 3, 4], &mut weights);
     let result = weights
         .into_iter()
-        .map(|(permutation, weight)| WeightedSkillOrder { permutation, weight })
+        .map(|(permutation, weight)| WeightedSkillOrder {
+            permutation,
+            weight,
+        })
         .collect::<Vec<_>>();
 
     assert_eq!(result.len(), SKILL_SHUFFLE_REACHABLE_ORDER_COUNT);
     assert_eq!(
-        result.iter().map(|order| u32::from(order.weight)).sum::<u32>(),
+        result
+            .iter()
+            .map(|order| u32::from(order.weight))
+            .sum::<u32>(),
         u32::from(SKILL_SHUFFLE_PATH_COUNT),
     );
 
@@ -99,7 +105,10 @@ mod tests {
         let orders = weighted_skill_orders();
         assert_eq!(orders.len(), 96);
         assert_eq!(
-            orders.iter().map(|order| u32::from(order.weight)).sum::<u32>(),
+            orders
+                .iter()
+                .map(|order| u32::from(order.weight))
+                .sum::<u32>(),
             1024,
         );
 

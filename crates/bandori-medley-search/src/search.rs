@@ -465,25 +465,13 @@ fn finite_slot_sum(values: [f64; 3]) -> f64 {
 fn candidate_solution_from_assigned(
     configuration: &AreaItemConfigurationV1,
     member_instance_ids: [[u32; 5]; 3],
-    leader_instance_ids: [u32; 3],
     song_scores: [f64; 3],
 ) -> Result<MedleySearchSolutionV1, SearchAbort> {
-    let mut teams = Vec::with_capacity(3);
-    for song_slot in 0..MEDLEY_TEAM_COUNT {
-        let members = member_order_for_leader(
-            member_instance_ids[song_slot],
-            leader_instance_ids[song_slot],
-        )
-        .map_err(map_candidate_failure)?;
-        teams.push(MedleySearchTeamV1 {
-            slot: song_slot as u8,
-            member_instance_ids: members,
-            average_score: song_scores[song_slot],
-        });
-    }
-    let teams: [MedleySearchTeamV1; 3] = teams
-        .try_into()
-        .map_err(|_| abort(SearchIncompleteReasonV1::InternalFailure))?;
+    let teams = std::array::from_fn(|song_slot| MedleySearchTeamV1 {
+        slot: song_slot as u8,
+        member_instance_ids: member_instance_ids[song_slot],
+        average_score: song_scores[song_slot],
+    });
     let total_average_score = (song_scores[0] + song_scores[1]) + song_scores[2];
     if !total_average_score.is_finite() {
         return Err(abort(SearchIncompleteReasonV1::ArithmeticOverflow));
@@ -501,18 +489,21 @@ fn candidate_solution(
 ) -> Result<MedleySearchSolutionV1, SearchAbort> {
     candidate_solution_from_assigned(
         configuration,
-        rows.map(|row| row.member_instance_ids),
-        std::array::from_fn(|slot| rows[slot].leader_instance_ids[slot]),
+        std::array::from_fn(|slot| rows[slot].song_member_instance_ids[slot]),
         std::array::from_fn(|slot| rows[slot].song_scores[slot]),
     )
 }
 
 fn map_candidate_failure(failure: CandidateFailure) -> SearchAbort {
     match failure {
-        CandidateFailure::InvalidInternalReference => {
-            abort(SearchIncompleteReasonV1::InternalFailure)
+        CandidateFailure::InvalidCardReference
+        | CandidateFailure::InvalidCharacterCombination
+        | CandidateFailure::InvalidAreaItemReference => {
+            abort(SearchIncompleteReasonV1::InvalidData)
         }
-        CandidateFailure::ArithmeticFailure => abort(SearchIncompleteReasonV1::ArithmeticOverflow),
+        CandidateFailure::ArithmeticNonFinite | CandidateFailure::ArithmeticOverflow => {
+            abort(SearchIncompleteReasonV1::ArithmeticOverflow)
+        }
     }
 }
 
@@ -524,7 +515,7 @@ struct LocalCandidate {
     member_instance_ids: [u32; 5],
     upper_score: f64,
     exact_score: f64,
-    exact_leader_instance_id: Option<u32>,
+    exact_member_instance_ids: Option<[u32; 5]>,
 }
 
 impl LocalCandidate {
@@ -534,7 +525,7 @@ impl LocalCandidate {
             member_instance_ids,
             upper_score,
             exact_score: 0.0,
-            exact_leader_instance_id: None,
+            exact_member_instance_ids: None,
         }
     }
 
@@ -543,7 +534,7 @@ impl LocalCandidate {
             member_instance_ids: row.member_instance_ids,
             upper_score: row.song_scores[song_slot],
             exact_score: row.song_scores[song_slot],
-            exact_leader_instance_id: Some(row.leader_instance_ids[song_slot]),
+            exact_member_instance_ids: Some(row.song_member_instance_ids[song_slot]),
         }
     }
 }
@@ -629,7 +620,7 @@ impl ScoreCache {
         if let Some(row) = self.cached(members, state)? {
             return Ok(row);
         }
-        let row = evaluate_candidate(input, configuration, members, songs)
+        let row = evaluate_candidate(input, configuration, songs, members)
             .map_err(map_candidate_failure)?;
         add_counter(&mut state.diagnostics.complete_teams, 1)?;
         // Count the 3 songs x 5 leader results, not full chart scans.
@@ -1020,22 +1011,22 @@ fn exact_local_score<'control, 'callback, F>(
     song_slot: usize,
     state: &mut RunState<'control, 'callback>,
     score_candidate: &mut F,
-) -> Result<(f64, u32), SearchAbort>
+) -> Result<(f64, [u32; 5]), SearchAbort>
 where
     F: FnMut([u32; 5], &mut RunState<'control, 'callback>) -> Result<CompactCandidate, SearchAbort>,
 {
-    if let Some(leader) = row.exact_leader_instance_id {
-        return Ok((row.exact_score, leader));
+    if let Some(member_order) = row.exact_member_instance_ids {
+        return Ok((row.exact_score, member_order));
     }
     let exact = score_candidate(row.member_instance_ids, state)?;
     let score = exact.song_scores[song_slot];
     if score > row.upper_score {
         return Err(abort(SearchIncompleteReasonV1::ScorerDisagreement));
     }
-    let leader = exact.leader_instance_ids[song_slot];
+    let member_order = exact.song_member_instance_ids[song_slot];
     row.exact_score = score;
-    row.exact_leader_instance_id = Some(leader);
-    Ok((score, leader))
+    row.exact_member_instance_ids = Some(member_order);
+    Ok((score, member_order))
 }
 
 fn plan_configurations(
@@ -1130,7 +1121,7 @@ where
         }) {
             break;
         }
-        let (zero_score, zero_leader) =
+        let (zero_score, zero_order) =
             exact_local_score(&mut rows[0][zero], 0, state, score_candidate)?;
         let zero_members = rows[0][zero].member_instance_ids;
         if state.incumbent_score().is_some_and(|incumbent| {
@@ -1156,7 +1147,7 @@ where
                 add_counter(&mut state.diagnostics.card_conflicts, 1)?;
                 continue;
             }
-            let (one_score, one_leader) =
+            let (one_score, one_order) =
                 exact_local_score(&mut rows[1][one], 1, state, score_candidate)?;
             let one_members = rows[1][one].member_instance_ids;
             if state.incumbent_score().is_some_and(|incumbent| {
@@ -1194,7 +1185,7 @@ where
                 }) {
                     continue;
                 }
-                let (two_score, two_leader) =
+                let (two_score, two_order) =
                     exact_local_score(&mut rows[2][two], 2, state, score_candidate)?;
                 let song_scores = [zero_score, one_score, two_score];
                 let total = (song_scores[0] + song_scores[1]) + song_scores[2];
@@ -1203,8 +1194,7 @@ where
                 }
                 let solution = candidate_solution_from_assigned(
                     configuration,
-                    [zero_members, one_members, two_members],
-                    [zero_leader, one_leader, two_leader],
+                    [zero_order, one_order, two_order],
                     song_scores,
                 )?;
                 state.record_solution(solution)?;
@@ -1324,7 +1314,7 @@ where
         {
             break;
         }
-        let (outer_score, outer_leader) = exact_local_score(
+        let (outer_score, outer_order) = exact_local_score(
             &mut rows[pair_slots[0]][outer_index],
             pair_slots[0],
             state,
@@ -1360,7 +1350,7 @@ where
                 add_counter(&mut state.diagnostics.card_conflicts, 1)?;
                 continue;
             }
-            let (inner_score, inner_leader) = exact_local_score(
+            let (inner_score, inner_order) = exact_local_score(
                 &mut rows[pair_slots[1]][inner_index],
                 pair_slots[1],
                 state,
@@ -1418,7 +1408,7 @@ where
                     if cutoff.is_some_and(|cutoff| finite_slot_sum(upper) < cutoff) {
                         break 'indexed;
                     }
-                    let (indexed_score, indexed_leader) = exact_local_score(
+                    let (indexed_score, indexed_order) = exact_local_score(
                         &mut rows[indexed_slot][indexed_index],
                         indexed_slot,
                         state,
@@ -1434,17 +1424,12 @@ where
                         continue;
                     }
                     let mut member_instance_ids = [[0; 5]; 3];
-                    member_instance_ids[pair_slots[0]] = outer_members;
-                    member_instance_ids[pair_slots[1]] = inner_members;
-                    member_instance_ids[indexed_slot] = indexed_members;
-                    let mut leader_instance_ids = [0; 3];
-                    leader_instance_ids[pair_slots[0]] = outer_leader;
-                    leader_instance_ids[pair_slots[1]] = inner_leader;
-                    leader_instance_ids[indexed_slot] = indexed_leader;
+                    member_instance_ids[pair_slots[0]] = outer_order;
+                    member_instance_ids[pair_slots[1]] = inner_order;
+                    member_instance_ids[indexed_slot] = indexed_order;
                     let solution = candidate_solution_from_assigned(
                         configuration,
                         member_instance_ids,
-                        leader_instance_ids,
                         song_scores,
                     )?;
                     state.record_solution(solution)?;
@@ -3246,7 +3231,9 @@ mod tests {
                 member_instance_ids,
                 upper_score: score,
                 exact_score: score,
-                exact_leader_instance_id: Some(leader),
+                exact_member_instance_ids: Some(
+                    member_order_for_leader(member_instance_ids, leader).unwrap(),
+                ),
             };
             let rows = [
                 vec![row([0, 1, 2, 3, 4], 0, base_score)],
@@ -3349,7 +3336,9 @@ mod tests {
                         // order; only the upper may stop the deferred join.
                         upper_score: score.max(0.0) + (rank % 7) as f64,
                         exact_score: score,
-                        exact_leader_instance_id: Some(members[0]),
+                        exact_member_instance_ids: Some(
+                            member_order_for_leader(members, members[0]).unwrap(),
+                        ),
                     }
                 })
                 .collect()

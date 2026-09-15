@@ -126,12 +126,15 @@ pub(crate) fn trigger_indexes(song: &MedleySongV1) -> Result<[usize; 6], UpperBo
 }
 
 pub(crate) fn reference_ceiling(path_ceiling: u128) -> Result<f64, UpperBoundFailure> {
-    // The exact mean numerator is <= 5*path_ceiling. Integer-to-f64 conversion
-    // and division by positive five are monotone, including at large values.
-    let numerator = path_ceiling
-        .checked_mul(5)
-        .ok_or(UpperBoundFailure::Unknown)?;
-    checked_finite(numerator as f64 / 5.0)
+    // The exact real-shuffle expectation is bounded before the final floor.
+    // Converting the integer ceiling to f64 and stepping upward keeps the bound
+    // conservative even when the integer itself is not exactly representable.
+    let converted = checked_finite(path_ceiling as f64)?;
+    checked_finite(if path_ceiling == 0 {
+        0.0
+    } else {
+        converted.next_up()
+    })
 }
 
 pub(crate) fn add_song_uppers(values: [f64; 3]) -> Result<f64, UpperBoundFailure> {
@@ -146,10 +149,7 @@ mod tests {
     fn reference_ceiling_covers_integer_numerator_rounding() {
         for ceiling in [0_u128, 1_234_567, (1_u128 << 53) + 1, 1_u128 << 65] {
             let upper = reference_ceiling(ceiling).unwrap();
-            for offset in 0..=4 {
-                let numerator = (5 * ceiling).saturating_sub(offset);
-                assert!(numerator as f64 / 5.0 <= upper);
-            }
+            assert!(ceiling as f64 <= upper);
         }
     }
 

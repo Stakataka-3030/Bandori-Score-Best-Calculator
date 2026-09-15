@@ -1,5 +1,8 @@
+use std::collections::BTreeMap;
+
 use bandori_medley_model::{
-    ExactProbabilityV1, MedleySongV1, ResolvedScoreSkillV1, SkillBehaviorV1,
+    ExactProbabilityV1, MedleySongV1, ResolvedScoreSkillV1, SKILL_SHUFFLE_PATH_COUNT,
+    SKILL_SLOT_TRIGGER_WEIGHTS, SkillBehaviorV1, weighted_skill_orders,
 };
 
 const PERFECT_RATE: f64 = 1.1;
@@ -45,27 +48,6 @@ pub(crate) struct PreparedSongScoreRange {
     pub(crate) maximum_score_order_count: u16,
     #[cfg(test)]
     pub(crate) order_scores: Vec<i128>,
-}
-
-fn visit_skill_orders(
-    depth: usize,
-    order: &mut [usize; 5],
-    used: &mut [bool; 5],
-    visitor: &mut impl FnMut([usize; 5]),
-) {
-    if depth == order.len() {
-        visitor(*order);
-        return;
-    }
-    for member in 0..5 {
-        if used[member] {
-            continue;
-        }
-        used[member] = true;
-        order[depth] = member;
-        visit_skill_orders(depth + 1, order, used, visitor);
-        used[member] = false;
-    }
 }
 
 pub(crate) fn exact_probability_to_f64(probability: ExactProbabilityV1) -> f64 {
@@ -302,8 +284,52 @@ impl<'input> PreparedSong<'input> {
         Ok(totals)
     }
 
-    /// Enumerate the fixed 5! first-five orders after reusing production base
-    /// and independent-window contributions. The sixth trigger repeats leader.
+    /// Score one explicit initial five-member layout using the real game shuffle.
+    /// `layout[original_slot]` is the member index occupying that original slot.
+    fn expected_score_for_layout(
+        base_total: i128,
+        windows: &[[i128; 5]; 6],
+        layout: [usize; 5],
+    ) -> Result<f64, ExactScoreFailure> {
+        let mut seen = [false; 5];
+        for member in layout {
+            if member >= 5 || seen[member] {
+                return Err(ExactScoreFailure::InvalidSong);
+            }
+            seen[member] = true;
+        }
+
+        let mut weighted_first_five = 0_i128;
+        for original_slot in 0..5 {
+            let member = layout[original_slot];
+            for trigger in 0..5 {
+                let weighted = windows[trigger][member]
+                    .checked_mul(i128::from(
+                        SKILL_SLOT_TRIGGER_WEIGHTS[original_slot][trigger],
+                    ))
+                    .ok_or(ExactScoreFailure::ArithmeticOverflow)?;
+                weighted_first_five = weighted_first_five
+                    .checked_add(weighted)
+                    .ok_or(ExactScoreFailure::ArithmeticOverflow)?;
+            }
+        }
+        let leader = layout[2];
+        let fixed = base_total
+            .checked_add(windows[5][leader])
+            .and_then(|value| value.checked_mul(i128::from(SKILL_SHUFFLE_PATH_COUNT)))
+            .ok_or(ExactScoreFailure::ArithmeticOverflow)?;
+        let numerator = fixed
+            .checked_add(weighted_first_five)
+            .ok_or(ExactScoreFailure::ArithmeticOverflow)?;
+        let average = (numerator as f64 / f64::from(SKILL_SHUFFLE_PATH_COUNT)).floor();
+        if !average.is_finite() || average < 0.0 {
+            return Err(ExactScoreFailure::ArithmeticNonFinite);
+        }
+        Ok(average)
+    }
+
+    /// Enumerate the 96 reachable weighted first-five orders for one already
+    /// ordered team. The sixth trigger repeats `leader`.
     pub(crate) fn score_range(
         &self,
         skills: [ResolvedScoreSkillV1; 5],
@@ -324,30 +350,41 @@ impl<'input> PreparedSong<'input> {
         let mut leaders = [false; 5];
         leaders[leader] = true;
         let windows = self.window_contributions(&base_scores, &prepared_skills, leaders)?;
-        let first_five: i128 = windows[..5].iter().flatten().sum();
-        let average_score =
-            ((5 * (base_total + windows[5][leader]) + first_five) as f64 / 5.0).floor();
 
         let mut minimum_score = i128::MAX;
         let mut maximum_score = i128::MIN;
         let mut best_order = [0, 1, 2, 3, 4];
         let mut maximum_score_order_count = 0_u16;
+        let mut weighted_total = 0_i128;
         #[cfg(test)]
-        let mut order_scores = Vec::with_capacity(120);
-        visit_skill_orders(0, &mut [0; 5], &mut [false; 5], &mut |order| {
+        let mut order_scores = Vec::with_capacity(weighted_skill_orders().len());
+        for weighted_order in weighted_skill_orders() {
+            let order = weighted_order.permutation;
             let first_five_score: i128 = (0..5).map(|slot| windows[slot][order[slot]]).sum();
             let score = base_total + first_five_score + windows[5][leader];
+            let weighted_score = score
+                .checked_mul(i128::from(weighted_order.weight))
+                .ok_or(ExactScoreFailure::ArithmeticOverflow)?;
+            weighted_total = weighted_total
+                .checked_add(weighted_score)
+                .ok_or(ExactScoreFailure::ArithmeticOverflow)?;
             minimum_score = minimum_score.min(score);
             if score > maximum_score {
                 maximum_score = score;
                 best_order = order;
-                maximum_score_order_count = 1;
+                maximum_score_order_count = weighted_order.weight;
             } else if score == maximum_score {
-                maximum_score_order_count += 1;
+                maximum_score_order_count = maximum_score_order_count
+                    .checked_add(weighted_order.weight)
+                    .ok_or(ExactScoreFailure::ArithmeticOverflow)?;
             }
             #[cfg(test)]
             order_scores.push(score);
-        });
+        }
+        let average_score = (weighted_total as f64 / f64::from(SKILL_SHUFFLE_PATH_COUNT)).floor();
+        if !average_score.is_finite() || average_score < 0.0 {
+            return Err(ExactScoreFailure::ArithmeticNonFinite);
+        }
         debug_assert!(maximum_score_order_count > 0);
 
         Ok(PreparedSongScoreRange {
@@ -361,40 +398,62 @@ impl<'input> PreparedSong<'input> {
         })
     }
 
-    /// Each member occupies each of the first five slots in 24/120 orders.
-    /// Independent integer extras therefore need only a denominator of five.
-    /// i128 covers u32 note counts/scores, signed extras and this numerator.
+    /// Score arbitrary initial layouts without enumerating RNG paths per layout.
+    /// Window tables are cached by the exact f64 parameter bits because member
+    /// order can change the final summation bit even when the mathematical sum is equal.
+    pub(crate) fn score_layouts(
+        &self,
+        skills: [ResolvedScoreSkillV1; 5],
+        layouts: &[([usize; 5], f64)],
+    ) -> Result<Vec<f64>, ExactScoreFailure> {
+        let prepared_skills = self.prepare_skills(skills)?;
+        let mut cache = BTreeMap::<u64, (i128, [[i128; 5]; 6])>::new();
+        let mut result = Vec::with_capacity(layouts.len());
+
+        for &(layout, parameter) in layouts {
+            let key = parameter.to_bits();
+            if let std::collections::btree_map::Entry::Vacant(entry) = cache.entry(key) {
+                let base_scores = self.base_scores(parameter)?;
+                let base_total: i128 = self
+                    .combo_groups
+                    .iter()
+                    .zip(&base_scores)
+                    .map(|(group, score)| i128::from(*score) * (group.end - group.start) as i128)
+                    .sum();
+                // Compute the sixth-window contribution for every possible leader once.
+                let windows =
+                    self.window_contributions(&base_scores, &prepared_skills, [true; 5])?;
+                entry.insert((base_total, windows));
+            }
+            let (base_total, windows) = cache
+                .get(&key)
+                .ok_or(ExactScoreFailure::ArithmeticNonFinite)?;
+            result.push(Self::expected_score_for_layout(
+                *base_total,
+                windows,
+                layout,
+            )?);
+        }
+        Ok(result)
+    }
+
+    /// Compatibility helper retained for upstream score microbenchmarks. Search
+    /// itself uses `score_layouts` and therefore also optimizes non-leader slots.
     pub(crate) fn score_leaders(
         &self,
         skills: [ResolvedScoreSkillV1; 5],
         parameters: [f64; 5],
     ) -> Result<[f64; 5], ExactScoreFailure> {
-        let skills = self.prepare_skills(skills)?;
-        let mut averages = [0.0; 5];
-        for leader in 0..5 {
-            if parameters[..leader]
-                .iter()
-                .any(|value| value.to_bits() == parameters[leader].to_bits())
-            {
-                continue;
-            }
-            // Leader placement can change parameter summation's last bit.
-            let leaders = parameters.map(|value| value.to_bits() == parameters[leader].to_bits());
-            let base_scores = self.base_scores(parameters[leader])?;
-            let base_total: i128 = self
-                .combo_groups
-                .iter()
-                .zip(&base_scores)
-                .map(|(group, score)| i128::from(*score) * (group.end - group.start) as i128)
-                .sum();
-            let windows = self.window_contributions(&base_scores, &skills, leaders)?;
-            let first_five: i128 = windows[..5].iter().flatten().sum();
-            for index in (0..5).filter(|index| leaders[*index]) {
-                averages[index] =
-                    ((5 * (base_total + windows[5][index]) + first_five) as f64 / 5.0).floor();
-            }
-        }
-        Ok(averages)
+        let layouts = [
+            ([1, 2, 0, 3, 4], parameters[0]),
+            ([0, 2, 1, 3, 4], parameters[1]),
+            ([0, 1, 2, 3, 4], parameters[2]),
+            ([0, 1, 3, 2, 4], parameters[3]),
+            ([0, 1, 4, 2, 3], parameters[4]),
+        ];
+        self.score_layouts(skills, &layouts)?
+            .try_into()
+            .map_err(|_| ExactScoreFailure::ArithmeticOverflow)
     }
 }
 
@@ -517,7 +576,7 @@ mod tests {
                 .iter()
                 .map(|bits| bits.to_f64())
                 .sum::<f64>()
-                / 120.0;
+                / expected.songs[slot].permutation_expected_score_bits.len() as f64;
             assert_eq!(expected.songs[slot].average_score(), raw_mean.floor());
             assert_eq!(
                 averages[leader].to_bits(),
@@ -583,7 +642,7 @@ mod tests {
     }
 
     #[test]
-    fn score_range_matches_all_120_reference_orders() {
+    fn score_range_matches_all_weighted_reference_paths() {
         let mut input: FixedMedleyEvaluationInputV1 = serde_json::from_str(FIXTURE).unwrap();
         let team = input.teams[0];
         let behaviors = [
@@ -630,9 +689,19 @@ mod tests {
             .score_range(skills, team.deck_total_parameter, 2)
             .unwrap();
         let reference_scores = &reference.songs[0].permutation_expected_score_bits;
-        assert_eq!(range.order_scores.len(), 120);
-        assert_eq!(reference_scores.len(), 120);
-        for (actual, expected) in range.order_scores.iter().zip(reference_scores) {
+        assert_eq!(range.order_scores.len(), weighted_skill_orders().len());
+        assert_eq!(
+            reference_scores.len(),
+            usize::from(SKILL_SHUFFLE_PATH_COUNT)
+        );
+        let mut expanded_scores = Vec::with_capacity(usize::from(SKILL_SHUFFLE_PATH_COUNT));
+        for (actual, weighted_order) in range.order_scores.iter().zip(weighted_skill_orders()) {
+            expanded_scores.extend(std::iter::repeat_n(
+                *actual,
+                usize::from(weighted_order.weight),
+            ));
+        }
+        for (actual, expected) in expanded_scores.iter().zip(reference_scores) {
             assert_eq!((*actual as f64).to_bits(), expected.to_f64().to_bits());
         }
 
@@ -641,17 +710,16 @@ mod tests {
         let expected_maximum_count = range
             .order_scores
             .iter()
-            .filter(|score| **score == expected_maximum)
-            .count() as u16;
-        let mut orders = Vec::with_capacity(120);
-        visit_skill_orders(0, &mut [0; 5], &mut [false; 5], &mut |order| {
-            orders.push(order)
-        });
-        let expected_best_order = orders[range
+            .zip(weighted_skill_orders())
+            .filter(|(score, _)| **score == expected_maximum)
+            .map(|(_, order)| order.weight)
+            .sum::<u16>();
+        let best_index = range
             .order_scores
             .iter()
             .position(|score| *score == expected_maximum)
-            .unwrap()];
+            .unwrap();
+        let expected_best_order = weighted_skill_orders()[best_index].permutation;
         assert_eq!(range.minimum_score, expected_minimum);
         assert_eq!(range.maximum_score, expected_maximum);
         assert_eq!(range.maximum_score_order_count, expected_maximum_count);

@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use bandori_medley_model::ResolvedScoreSkillV1;
+use bandori_medley_model::{ResolvedScoreSkillV1, SKILL_SHUFFLE_PATH_COUNT};
 use serde::{Deserialize, Serialize};
 
 use crate::exact_score::{ExactScoreFailure, PreparedSong, exact_probability_to_f64};
@@ -9,7 +9,7 @@ use crate::{
     AreaItemConfigurationV1, MedleySearchInputV1, MedleySearchSolutionV1, SearchIncompleteReasonV1,
 };
 
-const SCORE_ORDER_COUNT: u16 = 120;
+const SCORE_ORDER_COUNT: u16 = SKILL_SHUFFLE_PATH_COUNT;
 const RETAINED_SOLUTION_LIMIT: usize = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -356,8 +356,8 @@ mod tests {
                 team.best_skill_order_member_instance_ids[5],
                 team.member_instance_ids[2]
             );
-            assert_eq!(team.score_order_count, 120);
-            assert!((1..=120).contains(&team.maximum_score_order_count));
+            assert_eq!(team.score_order_count, SKILL_SHUFFLE_PATH_COUNT);
+            assert!((1..=SKILL_SHUFFLE_PATH_COUNT).contains(&team.maximum_score_order_count));
         }
 
         let mut mismatched = solution;

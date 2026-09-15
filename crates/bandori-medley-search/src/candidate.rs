@@ -147,14 +147,10 @@ pub(crate) fn evaluate_candidate(
     let mut ordered_members = Vec::<[u32; 5]>::with_capacity(120);
     for layout in initial_member_layouts() {
         let members = layout.map(|member| member_instance_ids[member]);
-        let parameter = calculate_team_parameters(
-            &input.cards,
-            &input.area_items,
-            configuration,
-            members,
-        )
-        .map_err(map_parameter_failure)?
-        .deck_total_parameter;
+        let parameter =
+            calculate_team_parameters(&input.cards, &input.area_items, configuration, members)
+                .map_err(map_parameter_failure)?
+                .deck_total_parameter;
         layouts.push((*layout, parameter));
         ordered_members.push(members);
     }
@@ -165,7 +161,9 @@ pub(crate) fn evaluate_candidate(
 
     // Layout order is lexicographic, so score ties retain a stable source order.
     for (song_slot, song) in songs.iter().enumerate() {
-        let scores = song.score_layouts(skills, &layouts).map_err(map_score_failure)?;
+        let scores = song
+            .score_layouts(skills, &layouts)
+            .map_err(map_score_failure)?;
         let mut best_layout_index = 0;
         for layout_index in 1..scores.len() {
             if scores[layout_index] > scores[best_layout_index] {
