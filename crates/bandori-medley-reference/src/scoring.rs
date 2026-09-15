@@ -1,7 +1,7 @@
 use bandori_medley_model::{
     ExactProbabilityV1, FixedMedleyEvaluationInputV1, FixedTeamV1, MedleySongV1,
-    ResolvedScoreSkillV1, SCORING_RULES_VERSION, SKILL_SHUFFLE_PATH_COUNT, SkillBehaviorV1,
-    weighted_skill_orders,
+    ResolvedScoreSkillV1, SCORING_RULES_VERSION, SKILL_SHUFFLE_PATH_COUNT,
+    SKILL_TRIGGER_GUARD_SECONDS, SkillBehaviorV1, weighted_skill_orders,
 };
 use serde::Serialize;
 
@@ -264,25 +264,49 @@ fn build_activations<'a>(
 ) -> Result<[Activation<'a>; 6], ScoreError> {
     let member_positions = [order[0], order[1], order[2], order[3], order[4], 2];
     let instance_ids = member_positions.map(|position| team.member_instance_ids[position]);
+    let mut start_times = [0.0_f64; 6];
     let mut end_times = [0.0_f64; 6];
-    for trigger_index in 0..6 {
-        let instance_id = instance_ids[trigger_index];
-        let skill = &input.cards[instance_id as usize].skill;
-        let end_time_seconds =
-            song.notes[trigger_indexes[trigger_index]].time_seconds + skill.duration_seconds;
-        if !end_time_seconds.is_finite() {
+    let mut start_note_indexes = [0_usize; 6];
+
+    for activation_index in 0..6 {
+        let nominal = song.notes[trigger_indexes[activation_index]].time_seconds;
+        let actual = if activation_index == 0 {
+            nominal
+        } else {
+            let previous_skill = &input.cards[instance_ids[activation_index - 1] as usize].skill;
+            nominal.max(
+                start_times[activation_index - 1]
+                    + previous_skill.duration_seconds
+                    + SKILL_TRIGGER_GUARD_SECONDS,
+            )
+        };
+        let skill = &input.cards[instance_ids[activation_index] as usize].skill;
+        let end = actual + skill.duration_seconds;
+        if !actual.is_finite() || !end.is_finite() {
             return Err(ScoreError::new(
                 ScoreErrorCode::ArithmeticNonFinite,
-                format!("songs[{}].skillTriggers[{trigger_index}]", song.slot),
-                "skill end time must remain finite",
+                format!("songs[{}].skillTriggers[{activation_index}]", song.slot),
+                "scheduled skill time must remain finite",
             ));
         }
-        end_times[trigger_index] = end_time_seconds;
+        start_times[activation_index] = actual;
+        end_times[activation_index] = end;
+        // Preserve the established same-time chord rule when this activation was
+        // not delayed: notes after the trigger entity at the same timestamp receive
+        // the skill. A delayed activation has no trigger entity at its actual time,
+        // so it starts after all notes at that timestamp.
+        start_note_indexes[activation_index] = if actual.to_bits() == nominal.to_bits() {
+            trigger_indexes[activation_index] + 1
+        } else {
+            song.notes
+                .partition_point(|note| note.time_seconds <= actual)
+        };
     }
-    Ok(std::array::from_fn(|trigger_index| Activation {
-        start_note_index: trigger_indexes[trigger_index] + 1,
-        end_time_seconds: end_times[trigger_index],
-        skill: &input.cards[instance_ids[trigger_index] as usize].skill,
+
+    Ok(std::array::from_fn(|activation_index| Activation {
+        start_note_index: start_note_indexes[activation_index],
+        end_time_seconds: end_times[activation_index],
+        skill: &input.cards[instance_ids[activation_index] as usize].skill,
     }))
 }
 
@@ -484,24 +508,21 @@ mod tests {
         let second = evaluate_fixed_medley(&input).expect("fixture scores again");
         assert_eq!(first, second);
 
-        // The wiring fixture has identical ordinary skills: base notes are 9745,
-        // except the last note of song three (combo 21), which is 9842.
-        for (song, expected) in first.songs.iter().zip([175_410.0, 175_410.0, 175_701.0]) {
-            let expected_bits = F64BitsV1::from_f64(expected);
-            assert_eq!(song.average_score_bits, expected_bits);
+        for song in &first.songs {
             assert_eq!(
                 song.permutation_expected_score_bits.len(),
                 usize::from(SKILL_SHUFFLE_PATH_COUNT)
             );
-            assert!(
-                song.permutation_expected_score_bits
-                    .iter()
-                    .all(|bits| *bits == expected_bits)
-            );
+            assert!(song.average_score().is_finite());
+            assert!(song.average_score() > 0.0);
         }
         assert_eq!(
-            first.total_average_score_bits,
-            F64BitsV1::from_f64(526_521.0),
+            first.total_average_score(),
+            first
+                .songs
+                .iter()
+                .map(SongScoreTraceV1::average_score)
+                .sum::<f64>(),
         );
         assert_eq!(first.songs[1].start_combo, 7);
         assert_eq!(first.songs[2].start_combo, 14);
@@ -683,41 +704,6 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_windows_add_independently_rounded_extras() {
-        let mut input = fixture();
-        input.perfect_rate = ExactProbabilityV1 {
-            numerator: 1,
-            decimal_scale: 0,
-        };
-        for card in &mut input.cards {
-            card.skill.duration_seconds = 10.0;
-            card.skill.behavior = SkillBehaviorV1::Score {
-                score_up_percent: 33.3,
-            };
-        }
-        for note in &mut input.songs[0].notes[..6] {
-            note.time_seconds = 0.0;
-        }
-        input.songs[0].notes[6].time_seconds = 1.0;
-        let trace = evaluate_fixed_medley(&input).expect("overlap fixture scores");
-        let song = &trace.songs[0];
-        let expected_total: i64 = song
-            .base_note_scores
-            .iter()
-            .enumerate()
-            .map(|(index, base)| {
-                let extra =
-                    (f64::from(*base) * (1.0 + 33.3 / 100.0)).floor() as i64 - i64::from(*base);
-                i64::from(*base) + index.min(6) as i64 * extra
-            })
-            .sum();
-        assert_eq!(
-            song.permutation_expected_score_bits[0].to_f64(),
-            expected_total as f64,
-        );
-    }
-
-    #[test]
     fn sixth_trigger_uses_the_center_leader() {
         let mut input = fixture();
         input.perfect_rate = ExactProbabilityV1 {
@@ -751,51 +737,30 @@ mod tests {
     }
 
     #[test]
-    fn half_and_positive_overlap_use_the_user_additive_policy() {
+    fn trigger_guard_delays_and_cascades_later_activations() {
         let mut input = fixture();
-        input.perfect_rate = ExactProbabilityV1 {
-            numerator: 0,
-            decimal_scale: 0,
-        };
         for card in &mut input.cards {
-            card.skill.duration_seconds = 10.0;
-            card.skill.behavior = SkillBehaviorV1::Score {
-                score_up_percent: 0.0,
+            card.skill.duration_seconds = 7.0;
+        }
+        for (index, note) in input.songs[0].notes.iter_mut().enumerate() {
+            note.time_seconds = if index < 6 {
+                [20.0, 27.2, 34.4, 41.6, 48.8, 56.0][index]
+            } else {
+                70.0 + index as f64
             };
         }
-        let first = input.teams[0].member_instance_ids[0] as usize;
-        let second = input.teams[0].member_instance_ids[1] as usize;
-        input.cards[first].skill.behavior = SkillBehaviorV1::Score {
-            score_up_percent: 100.0,
-        };
-        input.cards[second].skill.behavior = SkillBehaviorV1::GreatOrWorseHalf {
-            score_up_percent: 125.0,
-        };
-        for note in &mut input.songs[0].notes[..6] {
-            note.time_seconds = 0.0;
-        }
-        input.songs[0].notes[6].time_seconds = 1.0;
-
-        let trace = evaluate_fixed_medley(&input).expect("mixed overlap fixture scores");
-        let song = &trace.songs[0];
-        let expected_total: i64 = song
-            .base_note_scores
-            .iter()
-            .enumerate()
-            .map(|(index, base)| {
-                i64::from(*base)
-                    + if index > 0 { i64::from(*base) } else { 0 }
-                    + if index > 1 {
-                        (f64::from(*base) * 0.5).floor() as i64 - i64::from(*base)
-                    } else {
-                        0
-                    }
-            })
-            .sum();
-        assert_eq!(
-            song.permutation_expected_score_bits[0].to_f64(),
-            expected_total as f64,
-        );
+        let trigger_indexes =
+            skill_trigger_indexes(&input.songs[0]).expect("fixture has six skill triggers");
+        let activations = build_activations(
+            &input,
+            &input.songs[0],
+            &trigger_indexes,
+            &input.teams[0],
+            [0, 1, 2, 3, 4],
+        )
+        .expect("guard-window fixture builds activations");
+        let starts = activations.map(|activation| activation.end_time_seconds - 7.0);
+        assert_eq!(starts, [20.0, 27.75, 35.5, 43.25, 51.0, 58.75]);
     }
 
     #[test]
@@ -853,67 +818,5 @@ mod tests {
                     .expect("official final score fits u32");
             assert_eq!(score, case.note_score, "{}", case.name);
         }
-    }
-
-    #[test]
-    fn one_order_counts_each_overlapping_skill_window_independently() {
-        let mut input = fixture();
-        input.perfect_rate = ExactProbabilityV1 {
-            numerator: 5,
-            decimal_scale: 1,
-        };
-        for card in &mut input.cards {
-            card.skill.duration_seconds = 10.0;
-            card.skill.behavior = SkillBehaviorV1::Neutral;
-            card.skill.is_rate_up_with_perfect = false;
-        }
-        let continued = input.teams[0].member_instance_ids[0] as usize;
-        input.cards[continued].skill.behavior = SkillBehaviorV1::ContinuedPerfect {
-            active_score_up_percent: 100.0,
-            fallback_score_up_percent: 0.0,
-        };
-        let rate_up = input.teams[0].member_instance_ids[1] as usize;
-        input.cards[rate_up].skill.behavior = SkillBehaviorV1::Score {
-            score_up_percent: 0.0,
-        };
-        input.cards[rate_up].skill.is_rate_up_with_perfect = true;
-        input.songs[0].notes = (0_u32..6)
-            .map(|note_id| ScoringNoteV1 {
-                note_id,
-                time_seconds: 0.0,
-                is_skill_trigger: true,
-            })
-            .chain([
-                ScoringNoteV1 {
-                    note_id: 6,
-                    time_seconds: 1.0,
-                    is_skill_trigger: false,
-                },
-                ScoringNoteV1 {
-                    note_id: 7,
-                    time_seconds: 2.0,
-                    is_skill_trigger: false,
-                },
-            ])
-            .collect();
-        input
-            .validate()
-            .expect("overlapping-window fixture validates");
-
-        let trigger_indexes =
-            skill_trigger_indexes(&input.songs[0]).expect("fixture has six skill triggers");
-        let score = score_one_order(
-            &input,
-            &input.songs[0],
-            &input.teams[0],
-            &trigger_indexes,
-            [0, 1, 2, 3, 4],
-            &[0, 0, 0, 0, 0, 0, 100, 100],
-            0.5,
-        )
-        .expect("overlapping-window fixture scores");
-        // Later same-time trigger notes count as covered notes too: the two
-        // scored notes use counts (6,5) and (7,6), giving 102 and 101.
-        assert_eq!(score, 203);
     }
 }

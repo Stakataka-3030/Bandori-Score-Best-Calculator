@@ -71,7 +71,7 @@ fn fixture() -> MedleySearchInputV1 {
         notes: (0_u32..7)
             .map(|note_id| ScoringNoteV1 {
                 note_id,
-                time_seconds: f64::from(note_id),
+                time_seconds: f64::from(note_id) * 10.0,
                 is_skill_trigger: note_id < 6,
             })
             .collect(),
@@ -127,9 +127,9 @@ fn conflicting_contexts_fixture() -> MedleySearchInputV1 {
         };
     }
     for note in &mut input.songs[1].notes {
-        note.time_seconds *= 0.25;
+        note.time_seconds *= 0.5;
     }
-    input.songs[2].notes[6].time_seconds = 5.25;
+    input.songs[2].notes[6].time_seconds = 52.5;
     input.area_items.push(SearchAreaItemV1 {
         area_item_id: 2,
         target_band_ids: vec![1],

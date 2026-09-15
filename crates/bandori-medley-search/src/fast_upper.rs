@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bandori_medley_model::{
     ResolvedScoreSkillV1, SKILL_SHUFFLE_PATH_COUNT, SKILL_SLOT_TRIGGER_WEIGHTS,
+    SKILL_TRIGGER_GUARD_SECONDS,
 };
 
 use crate::candidate::member_order_for_leader;
@@ -170,6 +171,13 @@ impl<'a> FastScoreModel<'a> {
             perfect_rate,
             u32::try_from(maximum_notes).map_err(|_| UpperBoundFailure::Unknown)?,
         )?;
+        let maximum_skill_duration = input
+            .cards
+            .iter()
+            .filter(|card| !card.is_excluded)
+            .flat_map(|card| contexts(card))
+            .map(|skill| skill.duration_seconds)
+            .fold(0.0_f64, f64::max);
         let character_ids = input
             .cards
             .iter()
@@ -244,6 +252,31 @@ impl<'a> FastScoreModel<'a> {
                 .ok_or(UpperBoundFailure::Unknown)?;
         }
 
+        // Bound each activation's delayed start separately. earliest is the chart
+        // trigger itself. latest recursively assumes every preceding activation uses
+        // the longest skill in the entire eligible card pool, which is reachable or
+        // later than every real schedule. A skill's real note window is therefore a
+        // subset of [trigger+1, latest+duration]. Summing that whole union is looser
+        // than an exact sliding window but remains a rigorous upper bound while
+        // preserving far more positional information than an anywhere-in-chart bound.
+        let latest_starts = std::array::from_fn::<_, 3, _>(|slot| {
+            let song = &input.songs[slot];
+            let mut latest = [0.0_f64; 6];
+            for activation in 0..6 {
+                let nominal = song.notes[triggers[slot][activation]].time_seconds;
+                latest[activation] = if activation == 0 {
+                    nominal
+                } else {
+                    nominal.max(
+                        latest[activation - 1]
+                            + maximum_skill_duration
+                            + SKILL_TRIGGER_GUARD_SECONDS,
+                    )
+                };
+            }
+            latest
+        });
+
         // A duration's exact windows are traversed once, never once per node or
         // area configuration. Direct upward sums avoid unsafe prefix subtraction.
         let mut windows = BTreeMap::<u64, [[f64; 6]; 3]>::new();
@@ -257,18 +290,25 @@ impl<'a> FastScoreModel<'a> {
                 {
                     let mut coverage = [[0.0; 6]; 3];
                     for slot in 0..3 {
+                        let song = &input.songs[slot];
                         for activation_index in 0..6 {
                             let trigger = triggers[slot][activation_index];
-                            let song = &input.songs[slot];
-                            let end = checked_finite(
-                                song.notes[trigger].time_seconds + skill.duration_seconds,
+                            let latest_end = checked_finite(
+                                latest_starts[slot][activation_index] + skill.duration_seconds,
                             )?;
+                            // Actual activation starts can only move later than the
+                            // nominal trigger. Starting at trigger+1 includes every note
+                            // any delayed schedule could possibly score, while excluding
+                            // the trigger entity itself. Direct upward addition makes this
+                            // a safe superset bound without prefix-subtraction rounding.
                             for (note, alpha) in
                                 song.notes.iter().zip(&alphas[slot]).skip(trigger + 1)
                             {
-                                if note.time_seconds <= end {
+                                if note.time_seconds <= latest_end {
                                     coverage[slot][activation_index] =
                                         add_up(coverage[slot][activation_index], *alpha)?;
+                                } else {
+                                    break;
                                 }
                             }
                         }
