@@ -1,20 +1,11 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import * as ts from "typescript";
+import { pathToFileURL } from "node:url";
 
+// Node 22.23+ strips erasable TypeScript syntax natively, so this executes the
+// actual production module instead of a duplicated test implementation.
 const sourcePath = resolve("src/lib/bandori/team-builder/core/skill-shuffle.ts");
-const source = await readFile(sourcePath, "utf8");
-const transpiled = ts.transpileModule(source, {
-  compilerOptions: {
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.ES2022,
-  },
-  fileName: sourcePath,
-}).outputText;
-
-const moduleUrl = `data:text/javascript;base64,${Buffer.from(transpiled).toString("base64")}`;
-const shuffle = await import(moduleUrl);
+const shuffle = await import(`${pathToFileURL(sourcePath).href}?verify=${Date.now()}`);
 
 assert.equal(shuffle.BANDORI_SKILL_SHUFFLE_PATH_COUNT, 1024);
 assert.equal(shuffle.BANDORI_SKILL_SHUFFLE_REACHABLE_ORDER_COUNT, 96);
