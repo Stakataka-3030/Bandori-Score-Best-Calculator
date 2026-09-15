@@ -27,7 +27,9 @@ export type GameDataManifest = {
 
 export type GameDataGeneration = {
   manifest: GameDataManifest;
-  masters: Record<BestdoriMasterKind, Record<string, unknown>>;
+  // Bestdori master schemas vary by dataset and evolve independently. Runtime adapters
+  // validate the gameplay fields they consume; the cached raw master layer stays dynamic.
+  masters: Record<BestdoriMasterKind, Record<string, any>>;
 };
 
 export type GenerationState = {
