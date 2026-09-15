@@ -4,6 +4,9 @@ use std::sync::OnceLock;
 pub const SKILL_SHUFFLE_SIZE: usize = 5;
 pub const SKILL_SHUFFLE_PATH_COUNT: u16 = 1024;
 pub const SKILL_SHUFFLE_REACHABLE_ORDER_COUNT: usize = 96;
+/// The game will not begin the next skill until this many seconds after the
+/// previous skill effect ends.
+pub const SKILL_TRIGGER_GUARD_SECONDS: f64 = 0.75;
 
 /// Integer RNG-path counts. Row = original team slot; column = trigger index.
 pub const SKILL_SLOT_TRIGGER_WEIGHTS: [[u16; SKILL_SHUFFLE_SIZE]; SKILL_SHUFFLE_SIZE] = [
@@ -116,5 +119,6 @@ mod tests {
             assert_eq!(row.into_iter().map(u32::from).sum::<u32>(), 1024);
         }
         assert_eq!(SKILL_SLOT_TRIGGER_WEIGHTS[4][4], 0);
+        assert_eq!(SKILL_TRIGGER_GUARD_SECONDS, 0.75);
     }
 }
