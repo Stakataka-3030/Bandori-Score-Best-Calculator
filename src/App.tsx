@@ -35,6 +35,7 @@ import type { MedleySearchInputV1 } from "@/lib/bandori/medley-foundation";
 import { importProfileFile, type ImportedProfile } from "@/lib/profile-import";
 import { runBandoriTeamSearch } from "@/search/run-team-search";
 import { runNativeMedleySearch, type MedleySearchRunResult } from "@/search/run-medley-search";
+import { getCachedPreparedChart } from "@/lib/bandori/team-builder/core/chart";
 
 type SyncState = "starting" | "ready" | "syncing" | "error";
 type SearchState = "idle" | "preparing" | "searching" | "error";
@@ -154,6 +155,7 @@ export default function App() {
   const [searchState, setSearchState] = useState<SearchState>("idle");
   const [searchMessage, setSearchMessage] = useState("");
   const [searchResponse, setSearchResponse] = useState<BandoriTeamSearchResponse | null>(null);
+  const [lastSkillTriggerTimes, setLastSkillTriggerTimes] = useState<number[] | null>(null);
   const [medleyInput, setMedleyInput] = useState<MedleySearchInputV1 | null>(null);
   const [medleyResponse, setMedleyResponse] = useState<MedleySearchRunResult | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -278,6 +280,7 @@ export default function App() {
       setCardPreferences(readCardPreferences(profilePreferenceKey(imported)));
       setProfileError("");
       setSearchResponse(null);
+      setLastSkillTriggerTimes(null);
       setMedleyInput(null);
       setMedleyResponse(null);
     } catch (cause) {
@@ -295,6 +298,7 @@ export default function App() {
     setSearchState("preparing");
     setSearchMessage("正在读取谱面并准备候选卡…");
     setSearchResponse(null);
+    setLastSkillTriggerTimes(null);
     setMedleyInput(null);
     setMedleyResponse(null);
 
@@ -356,6 +360,7 @@ export default function App() {
         maxSearchDurationMs: 60_000,
       });
       if (controller.signal.aborted) return;
+      setLastSkillTriggerTimes(getCachedPreparedChart(input).skillTriggerTimes.slice(0, 6));
       setSearchState("searching");
       setSearchMessage("正在搜索最优队伍…");
       const response = await runBandoriTeamSearch(input, { signal: controller.signal });
@@ -401,6 +406,7 @@ export default function App() {
           <h1>Score Best Calculator</h1>
           <p className="header-copy">根据本地档案与最新游戏数据搜索最优队伍；游戏 Master 与谱面由客户端自动同步。</p>
         </div>
+        <span className="build-stamp" title="当前客户端构建对应的 Git 提交">Build {__BUILD_SHA__}</span>
       </header>
 
       <div className={`workspace-grid ${searchResponse ? "" : "workspace-grid-single"}`}>
@@ -656,6 +662,7 @@ export default function App() {
                   data={gameData}
                   profile={profile}
                   server={server}
+                  skillTriggerTimes={lastSkillTriggerTimes ?? undefined}
                   eventPointSelection={{
                     liveBoostCount: eventControls.liveBoostCount,
                     challengeCpCost: eventControls.challengeCpCost,

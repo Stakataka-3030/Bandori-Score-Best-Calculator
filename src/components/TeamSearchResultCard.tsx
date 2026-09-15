@@ -8,6 +8,7 @@ import type {
 } from "@/lib/bandori/team-builder/core/types";
 import type { ImportedProfile } from "@/lib/profile-import";
 import type { GameDataGeneration } from "@/data";
+import { bandoriSkillTriggersCanShift, scheduleBandoriSkillTriggerTimes } from "@/lib/bandori/team-builder/core/skill-trigger-scheduler";
 
 type EventPointDisplaySelection = {
   liveBoostCount: 0 | 1 | 2 | 3;
@@ -21,6 +22,7 @@ type Props = {
   data: GameDataGeneration | null;
   profile: ImportedProfile | null;
   server: number;
+  skillTriggerTimes?: readonly number[];
   eventPointSelection: EventPointDisplaySelection;
 };
 
@@ -80,6 +82,55 @@ function formatProbability(numerator: number, denominator: number): string {
   if (denominator <= 0) return "—";
   const percent = numerator / denominator * 100;
   return `${numerator}/${denominator} · ${percent.toFixed(percent < 1 ? 2 : 1)}%`;
+}
+
+type SkillScheduleEntry = {
+  activationIndex: number;
+  cardId: number;
+  nominalTime: number;
+  actualTime: number;
+  delaySeconds: number;
+};
+
+type SkillScheduleDiagnostic = {
+  dynamicPath: boolean;
+  shiftedCount: number;
+  maxDelaySeconds: number;
+  entries: SkillScheduleEntry[];
+};
+
+function buildSkillScheduleDiagnostic(
+  result: BandoriTeamSearchResult,
+  skillTriggerTimes: readonly number[] | undefined,
+): SkillScheduleDiagnostic | null {
+  if (!skillTriggerTimes || skillTriggerTimes.length < 6 || result.skillOrderCardIds.length < 6) return null;
+  if (result.skillOrderActors?.some((actor) => actor !== "self")) return null;
+
+  const nominalTimes = skillTriggerTimes.slice(0, 6);
+  const skillByCardId = new Map(result.skills.map((skill) => [skill.cardId, skill.resolvedSkill]));
+  const activationCardIds = result.skillOrderCardIds.slice(0, 6);
+  if (activationCardIds.some((cardId) => cardId <= 0 || !skillByCardId.has(cardId))) return null;
+
+  const firstFiveDurations = result.skills.map((skill) => skill.resolvedSkill?.durationSeconds ?? 0);
+  const activationDurations = activationCardIds.map((cardId) => skillByCardId.get(cardId)?.durationSeconds ?? 0);
+  const scheduled = scheduleBandoriSkillTriggerTimes(nominalTimes, activationDurations);
+  const entries = nominalTimes.map((nominalTime, activationIndex) => {
+    const actualTime = scheduled.starts[activationIndex] ?? nominalTime;
+    return {
+      activationIndex,
+      cardId: activationCardIds[activationIndex],
+      nominalTime,
+      actualTime,
+      delaySeconds: Math.max(0, actualTime - nominalTime),
+    };
+  });
+  const delayed = entries.filter((entry) => entry.delaySeconds > 1e-9);
+  return {
+    dynamicPath: bandoriSkillTriggersCanShift(nominalTimes, firstFiveDurations),
+    shiftedCount: delayed.length,
+    maxDelaySeconds: delayed.reduce((maximum, entry) => Math.max(maximum, entry.delaySeconds), 0),
+    entries,
+  };
 }
 
 function chooseEventPoint(result: BandoriTeamSearchResult, selection: EventPointDisplaySelection) {
@@ -164,6 +215,7 @@ export default function TeamSearchResultCard({
   data,
   profile,
   server,
+  skillTriggerTimes,
   eventPointSelection,
 }: Props) {
   const fallbackIds = result.cards.map((card) => card.cardId);
@@ -174,6 +226,7 @@ export default function TeamSearchResultCard({
     ? displayedEventPoint ?? result.targetValue
     : result.targetValue;
   const areaLevels = profileAreaItemLevelMap(profile);
+  const skillSchedule = buildSkillScheduleDiagnostic(result, skillTriggerTimes);
 
   return (
     <article className="search-result-card">
@@ -221,6 +274,38 @@ export default function TeamSearchResultCard({
             })}
           </div>
         </div>
+      )}
+
+      {skillSchedule && (
+        <details className={`skill-schedule-diagnostic ${skillSchedule.dynamicPath ? "schedule-dynamic" : "schedule-normal"}`}>
+          <summary>
+            <span>精确技能调度</span>
+            <strong>{skillSchedule.dynamicPath ? "动态路径" : "普通"}</strong>
+            <span>
+              {skillSchedule.dynamicPath
+                ? skillSchedule.shiftedCount > 0
+                  ? `最佳顺序后移 ${skillSchedule.shiftedCount} 次 · 最大 +${skillSchedule.maxDelaySeconds.toFixed(3)}s`
+                  : "最佳顺序无后移"
+                : "无窗口后移"}
+            </span>
+          </summary>
+          <p className="skill-schedule-note">
+            {skillSchedule.dynamicPath
+              ? "当前队伍在本谱面存在触发窗口冲突可能，已使用 0.75s 精确调度。"
+              : "当前队伍的技能窗口彼此安全，固定窗口与精确调度结果一致。"}
+          </p>
+          <div className="skill-timeline">
+            {skillSchedule.entries.map((entry) => (
+              <div className="skill-timeline-row" key={entry.activationIndex}>
+                <span>{entry.activationIndex === 5 ? "返场" : `技能 ${entry.activationIndex + 1}`} · #{entry.cardId}</span>
+                <span>{entry.nominalTime.toFixed(3)}s → {entry.actualTime.toFixed(3)}s</span>
+                <strong className={entry.delaySeconds > 1e-9 ? "skill-delay-positive" : ""}>
+                  {entry.delaySeconds > 1e-9 ? `+${entry.delaySeconds.toFixed(3)}s` : "原时刻"}
+                </strong>
+              </div>
+            ))}
+          </div>
+        </details>
       )}
 
       <div className="result-detail-block">

@@ -368,3 +368,76 @@ p { line-height: 1.6; }
   .medley-song-heading { align-items: stretch; flex-direction: column; }
   .medley-song-score { justify-items: start; }
 }
+
+.build-stamp {
+  flex: 0 0 auto;
+  border: 1px solid var(--accent-border);
+  border-radius: 999px;
+  padding: 7px 11px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  font-size: 0.74rem;
+  font-weight: 750;
+  letter-spacing: 0.03em;
+}
+
+.skill-schedule-diagnostic {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: rgba(248, 248, 252, 0.72);
+  overflow: hidden;
+}
+.skill-schedule-diagnostic > summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 13px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.skill-schedule-diagnostic > summary::-webkit-details-marker { display: none; }
+.skill-schedule-diagnostic > summary strong { color: var(--text); }
+.skill-schedule-diagnostic.schedule-dynamic > summary strong { color: var(--accent-strong); }
+.skill-schedule-note {
+  margin: 0;
+  padding: 0 13px 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.skill-timeline {
+  display: grid;
+  gap: 1px;
+  border-top: 1px solid var(--border);
+  background: var(--border);
+}
+.skill-timeline-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) minmax(180px, auto) 80px;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 13px;
+  background: var(--panel-solid);
+  font-size: 0.78rem;
+}
+.skill-timeline-row > span:nth-child(2) {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.skill-timeline-row > strong {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.skill-delay-positive { color: var(--accent-strong); }
+
+@media (max-width: 700px) {
+  .build-stamp { align-self: flex-start; }
+  .skill-timeline-row {
+    grid-template-columns: 1fr auto;
+  }
+  .skill-timeline-row > span:nth-child(2) {
+    grid-column: 1 / -1;
+  }
+}
