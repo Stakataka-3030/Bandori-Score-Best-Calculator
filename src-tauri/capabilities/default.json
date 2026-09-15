@@ -8,7 +8,7 @@
     {
       "identifier": "http:default",
       "allow": [
-        { "url": "https://bestdori.com" }
+        { "url": "https://bestdori.com/**" }
       ]
     }
   ]
