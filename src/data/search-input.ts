@@ -84,7 +84,7 @@ function toCharacterBonuses(profile: ImportedProfile): BandoriCharacterBonusStat
   return profile.characterBonuses.map(toCharacterBonus);
 }
 
-function eventTypeFromBestdori(value: unknown): BandoriTeamSearchEventType {
+export function eventTypeFromBestdori(value: unknown): BandoriTeamSearchEventType {
   switch (value) {
     case "story":
     case "challenge":
@@ -99,6 +99,23 @@ function eventTypeFromBestdori(value: unknown): BandoriTeamSearchEventType {
     default:
       return "none";
   }
+}
+
+export function allowedLiveTypesForEvent(
+  eventType: BandoriTeamSearchEventType,
+): BandoriTeamSearchLiveType[] {
+  if (eventType === "challenge") {
+    return ["free", "multi", "challenge"];
+  }
+  if (eventType === "versus" || eventType === "festival") {
+    return ["versus"];
+  }
+  if (eventType === "medley") {
+    // The HHWX single-song engine represents medley context with free here;
+    // the full three-song medley optimizer remains a separate search mode.
+    return ["free"];
+  }
+  return ["free", "multi"];
 }
 
 function eventBonusFromBestdori(value: unknown): BandoriEventBonus | null {
@@ -168,6 +185,10 @@ export async function createBandoriSearchInput(
   );
   const inferredEventType = options.eventType
     ?? eventTypeFromBestdori(isRecord(rawEvent) ? rawEvent.eventType : null);
+  const allowedLiveTypes = allowedLiveTypesForEvent(inferredEventType);
+  const normalizedLiveType = options.liveType && allowedLiveTypes.includes(options.liveType)
+    ? options.liveType
+    : allowedLiveTypes[0] ?? "free";
 
   return {
     userCards: toUserCards(profile),
@@ -188,7 +209,7 @@ export async function createBandoriSearchInput(
     useSpecialRoomBonus: options.useSpecialRoomBonus,
     eventType: inferredEventType,
     eventFormula: options.eventFormula,
-    liveType: options.liveType,
+    liveType: normalizedLiveType,
     target: options.target,
     roomPower: options.roomPower,
     otherPlayersAveragePower: options.otherPlayersAveragePower,
