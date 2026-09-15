@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "scripts/apply-skill-trigger-delay-patch.mjs"
+      - "scripts/apply-scheduler-diagnostics-patch.mjs"
       - "scripts/verify-skill-trigger-scheduler.mjs"
       - "src/lib/bandori/team-builder/core/skill-trigger-scheduler.ts"
       - ".github/workflows/apply-skill-trigger-delay.yml"
@@ -31,23 +32,33 @@ jobs:
       - run: npm install
       - name: Apply scheduler-aware scoring patch
         run: node scripts/apply-skill-trigger-delay-patch.mjs
+      - name: Apply scheduler diagnostics UI patch
+        run: node scripts/apply-scheduler-diagnostics-patch.mjs
       - name: Verify skill order distribution
         run: npm run test:shuffle
       - name: Verify skill trigger scheduler
         run: npm run test:scheduler
       - name: Build frontend
         run: npm run build:web
-      - name: Commit tested scorer
+      - name: Commit tested scheduler changes
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "$(git status --porcelain src/lib/bandori/team-builder/core/scoring.ts)" ]]; then
-            echo "Scheduler-aware scoring patch already applied."
+          changed_paths=(
+            src/lib/bandori/team-builder/core/scoring.ts
+            src/App.tsx
+            src/components/TeamSearchResultCard.tsx
+            src/styles.css
+            src/vite-env.d.ts
+            vite.config.ts
+          )
+          if [[ -z "$(git status --porcelain -- "${changed_paths[@]}")" ]]; then
+            echo "Scheduler-aware scoring and diagnostics patches already applied."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/lib/bandori/team-builder/core/scoring.ts
-          git commit -m "Model the 0.75s skill trigger guard window"
+          git add "${changed_paths[@]}"
+          git commit -m "Expose skill trigger scheduling diagnostics"
           git pull --rebase origin main
           git push origin HEAD:main
