@@ -5,7 +5,10 @@ on:
   push:
     branches: [main]
     paths:
+      - "src/**"
       - "src-tauri/**"
+      - "crates/**"
+      - "Cargo.toml"
       - "package.json"
       - "vite.config.ts"
       - ".github/workflows/tauri-smoke.yml"
