@@ -1,10 +1,12 @@
 .card-thumb {
   position: relative;
   width: 100%;
-  overflow: hidden;
+  overflow: visible;
+  border: 2px solid transparent;
   border-radius: 10px;
   background: #eceef7;
   aspect-ratio: 1 / 1;
+  isolation: isolate;
 }
 
 .card-thumb img,
@@ -12,6 +14,8 @@
   display: block;
   width: 100%;
   height: 100%;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .card-thumb img {
@@ -28,15 +32,22 @@
   font-weight: 800;
 }
 
+.card-attribute-powerful { border-color: #ef5571; }
+.card-attribute-cool { border-color: #4a8bf5; }
+.card-attribute-happy { border-color: #f2a526; }
+.card-attribute-pure { border-color: #52b96e; }
+
 .card-thumb-caption {
   position: absolute;
   inset: auto 0 0;
   display: grid;
   gap: 1px;
   padding: 16px 6px 5px;
+  border-radius: 0 0 8px 8px;
   color: white;
   background: linear-gradient(transparent, rgba(16, 17, 28, 0.78));
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.42);
+  pointer-events: none;
 }
 
 .card-thumb-caption strong {
@@ -51,26 +62,96 @@
   white-space: nowrap;
 }
 
+.card-attribute-badge,
+.card-master-rank-badge,
 .card-leader-badge {
   position: absolute;
+  z-index: 2;
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  color: white;
+  box-shadow: 0 3px 10px rgba(34, 36, 78, 0.25);
+  font-size: 0.55rem;
+  font-weight: 900;
+  line-height: 1;
+  backdrop-filter: blur(5px);
+}
+
+.card-attribute-badge {
+  top: 5px;
+  left: 5px;
+  padding: 4px 5px;
+  border-radius: 6px;
+}
+.card-attribute-badge-powerful { background: rgba(222, 55, 87, 0.92); }
+.card-attribute-badge-cool { background: rgba(48, 112, 224, 0.92); }
+.card-attribute-badge-happy { background: rgba(220, 142, 14, 0.94); }
+.card-attribute-badge-pure { background: rgba(54, 155, 82, 0.92); }
+
+.card-master-rank-badge {
   top: 5px;
   right: 5px;
+  padding: 4px 5px;
+  border-radius: 6px;
+  background: rgba(28, 30, 46, 0.84);
+}
+
+.card-leader-badge {
+  right: 5px;
+  bottom: 29px;
   display: grid;
   width: 22px;
   height: 22px;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.8);
   border-radius: 50%;
-  color: white;
   background: var(--accent);
-  box-shadow: 0 3px 10px rgba(34, 36, 78, 0.28);
   font-size: 0.67rem;
-  font-weight: 900;
 }
 
 .card-thumb-leader {
   box-shadow: 0 0 0 2px var(--accent);
 }
+
+.card-hover-panel {
+  position: absolute;
+  z-index: 20;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  display: none;
+  width: min(260px, 72vw);
+  transform: translateX(-50%);
+  gap: 4px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  color: var(--text);
+  background: var(--panel-solid);
+  box-shadow: 0 14px 34px rgba(30, 32, 64, 0.18);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  pointer-events: none;
+}
+
+.card-hover-panel::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 9px;
+  height: 9px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-solid);
+}
+
+.card-thumb:hover .card-hover-panel,
+.card-thumb:focus-within .card-hover-panel {
+  display: grid;
+}
+
+.card-hover-panel > span { color: var(--muted); }
+.card-hover-skill { display: grid; gap: 2px; margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--border); }
+.card-hover-skill span { color: var(--text); }
 
 @media (prefers-color-scheme: dark) {
   .card-thumb,
