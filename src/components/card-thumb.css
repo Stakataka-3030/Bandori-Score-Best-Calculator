@@ -64,6 +64,7 @@
 
 .card-attribute-badge,
 .card-master-rank-badge,
+.card-skill-level-badge,
 .card-leader-badge {
   position: absolute;
   z-index: 2;
@@ -95,6 +96,14 @@
   background: rgba(28, 30, 46, 0.84);
 }
 
+.card-skill-level-badge {
+  left: 5px;
+  bottom: 30px;
+  padding: 4px 5px;
+  border-radius: 6px;
+  background: rgba(28, 30, 46, 0.82);
+}
+
 .card-leader-badge {
   right: 5px;
   bottom: 29px;
@@ -117,7 +126,7 @@
   left: 50%;
   bottom: calc(100% + 10px);
   display: none;
-  width: min(260px, 72vw);
+  width: min(300px, 76vw);
   transform: translateX(-50%);
   gap: 4px;
   padding: 11px 12px;
@@ -151,6 +160,7 @@
 
 .card-hover-panel > span { color: var(--muted); }
 .card-hover-skill { display: grid; gap: 2px; margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--border); }
+.card-hover-skill strong { font-size: 0.72rem; }
 .card-hover-skill span { color: var(--text); }
 
 @media (prefers-color-scheme: dark) {
