@@ -1,0 +1,42 @@
+name: Windows x64 test build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "package.json"
+      - "vite.config.ts"
+      - ".github/workflows/windows-test-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: npm install
+      - name: Verify skill shuffle model
+        run: npm run test:shuffle
+      - name: Build Windows NSIS package
+        run: npm run tauri:build -- --bundles nsis
+      - name: Upload Windows test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bandori-Score-Best-Calculator-windows-x64
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            src-tauri/target/release/*.exe
+            src-tauri/target/release/bundle/nsis/*.exe
