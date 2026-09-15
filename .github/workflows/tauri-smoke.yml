@@ -1,0 +1,40 @@
+name: Tauri native smoke build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src-tauri/**"
+      - "package.json"
+      - "vite.config.ts"
+      - ".github/workflows/tauri-smoke.yml"
+
+jobs:
+  native-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            name: linux
+          - platform: windows-latest
+            name: windows
+          - platform: macos-latest
+            name: macos
+    runs-on: ${{ matrix.platform }}
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux Tauri dependencies
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: npm install
+      - name: Compile native Tauri application
+        run: npm run tauri:build -- --no-bundle
