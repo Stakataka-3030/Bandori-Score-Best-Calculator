@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import BestdoriCardThumb from "@/components/BestdoriCardThumb";
+import SearchableSelect, { type SearchableSelectOption } from "@/components/SearchableSelect";
 import {
   allowedLiveTypesForEvent,
   createBandoriSearchInput,
@@ -9,9 +10,12 @@ import {
   syncBestdoriMastersIfStale,
   type GameDataGeneration,
 } from "@/data";
+import { BANDORI_AREA_ITEM_IDS_BY_GROUP } from "@/lib/bandori-area-item-groups";
 import type {
   BandoriTeamSearchDifficulty,
+  BandoriTeamSearchEventPointOption,
   BandoriTeamSearchEventType,
+  BandoriTeamSearchExternalSkill,
   BandoriTeamSearchLiveType,
   BandoriTeamSearchResponse,
   BandoriTeamSearchResult,
@@ -23,11 +27,6 @@ import { runBandoriTeamSearch } from "@/search/run-team-search";
 type SyncState = "starting" | "ready" | "syncing" | "error";
 type SearchState = "idle" | "preparing" | "searching" | "error";
 
-type SelectOption = {
-  id: number;
-  label: string;
-};
-
 const DIFFICULTIES: BandoriTeamSearchDifficulty[] = [
   "easy",
   "normal",
@@ -35,6 +34,14 @@ const DIFFICULTIES: BandoriTeamSearchDifficulty[] = [
   "expert",
   "special",
 ];
+
+const DIFFICULTY_KEYS: Record<BandoriTeamSearchDifficulty, string> = {
+  easy: "0",
+  normal: "1",
+  hard: "2",
+  expert: "3",
+  special: "4",
+};
 
 const DIFFICULTY_LABELS: Record<BandoriTeamSearchDifficulty, string> = {
   easy: "Easy",
@@ -54,6 +61,13 @@ const EVENT_TYPE_LABELS: Record<BandoriTeamSearchEventType, string> = {
   festival: "Team Live Festival",
   medley: "Medley Live",
 };
+
+const DEFAULT_OTHER_PLAYER_SKILLS: BandoriTeamSearchExternalSkill[] = [
+  { skillId: 69, skillLevel: 5 },
+  { skillId: 69, skillLevel: 1 },
+  { skillId: 66, skillLevel: 5 },
+  { skillId: 66, skillLevel: 1 },
+];
 
 function liveTypeLabel(
   liveType: BandoriTeamSearchLiveType,
@@ -81,7 +95,7 @@ function regionalText(value: unknown, preferredServer: number, fallback: string)
   return fallback;
 }
 
-function buildSongOptions(data: GameDataGeneration | null, server: number): SelectOption[] {
+function buildSongOptions(data: GameDataGeneration | null, server: number): SearchableSelectOption[] {
   if (!data) return [];
   return Object.entries(data.masters.songs)
     .flatMap(([id, value]) => {
@@ -93,7 +107,7 @@ function buildSongOptions(data: GameDataGeneration | null, server: number): Sele
     .sort((left, right) => left.label.localeCompare(right.label, "zh-Hans"));
 }
 
-function buildEventOptions(data: GameDataGeneration | null, server: number): SelectOption[] {
+function buildEventOptions(data: GameDataGeneration | null, server: number): SearchableSelectOption[] {
   if (!data) return [];
   return Object.entries(data.masters.events)
     .flatMap(([id, value]) => {
@@ -103,6 +117,31 @@ function buildEventOptions(data: GameDataGeneration | null, server: number): Sel
       return [{ id: eventId, label: `${label} · #${eventId}` }];
     })
     .sort((left, right) => right.id - left.id);
+}
+
+function getAvailableDifficulties(
+  data: GameDataGeneration | null,
+  songId: number | null,
+): BandoriTeamSearchDifficulty[] {
+  if (!data || songId === null) return DIFFICULTIES;
+  const song = data.masters.songs[String(songId)];
+  if (!isRecord(song) || !isRecord(song.difficulty)) return DIFFICULTIES;
+  const available = DIFFICULTIES.filter((item) => DIFFICULTY_KEYS[item] in song.difficulty!);
+  return available.length > 0 ? available : DIFFICULTIES;
+}
+
+function buildAreaItemLevelMap(profile: ImportedProfile | null): Map<number, number> {
+  const result = new Map<number, number>();
+  if (!profile) return result;
+  for (const [groupKey, levels] of Object.entries(profile.profile.items)) {
+    const itemIds = BANDORI_AREA_ITEM_IDS_BY_GROUP[groupKey] ?? [];
+    levels.forEach((encodedLevel, index) => {
+      const areaItemId = itemIds[index];
+      if (!areaItemId || encodedLevel === null) return;
+      result.set(areaItemId, Math.max(0, Math.trunc(encodedLevel) + 1));
+    });
+  }
+  return result;
 }
 
 function formatNumber(value: number | null | undefined): string {
@@ -115,6 +154,28 @@ function formatProbability(numerator: number, denominator: number): string {
   if (denominator <= 0) return "—";
   const percent = numerator / denominator * 100;
   return `${numerator}/${denominator} · ${percent.toFixed(percent < 1 ? 2 : 1)}%`;
+}
+
+function formatPointBonusRate(value: number): string {
+  const percent = value * 100;
+  return `+${Number.isInteger(percent) ? percent.toFixed(0) : percent.toFixed(1)}%`;
+}
+
+function eventPointOptionLabel(option: BandoriTeamSearchEventPointOption | null): string {
+  if (!option) return "—";
+  const parts: string[] = [];
+  if (option.liveBoostCount !== undefined) parts.push(`${option.liveBoostCount} 火`);
+  if (option.challengeCpCost !== undefined) parts.push(`${option.challengeCpCost} CP`);
+  if (option.festivalResult !== undefined) parts.push(option.festivalResult === "win" ? "胜利" : "失败");
+  if (option.placement !== undefined) parts.push(`#${option.placement}`);
+  return parts.length > 0 ? parts.join(" · ") : `×${option.multiplier}`;
+}
+
+function cardDisplayName(data: GameDataGeneration | null, cardId: number, server: number): string {
+  const master = data?.masters.cards[String(cardId)];
+  return isRecord(master)
+    ? regionalText(master.prefix, server, `#${cardId}`)
+    : `#${cardId}`;
 }
 
 function TeamSlots({
@@ -136,6 +197,10 @@ function TeamSlots({
       {ids.map((cardId, index) => {
         const resultCard = result.cards.find((card) => card.cardId === cardId);
         const master = data?.masters.cards[String(cardId)];
+        const characterMaster = resultCard
+          ? data?.masters.characters[String(resultCard.characterId)]
+          : null;
+        const skill = result.skills.find((item) => item.cardId === cardId)?.resolvedSkill;
         return (
           <div
             className={`team-slot ${index === 2 ? "team-slot-leader" : ""}`}
@@ -147,6 +212,10 @@ function TeamSlots({
               server={server}
               trained={resultCard?.isTrained ?? false}
               cardMaster={isRecord(master) ? master : null}
+              characterMaster={isRecord(characterMaster) ? characterMaster : null}
+              attribute={resultCard?.attribute}
+              masterRank={resultCard?.masterRank ?? 0}
+              resolvedSkill={skill}
               leader={cardId === result.leaderCardId}
             />
           </div>
@@ -156,7 +225,7 @@ function TeamSlots({
   );
 }
 
-function SearchResultCard({
+function SkillOrder({
   result,
   data,
   server,
@@ -165,6 +234,86 @@ function SearchResultCard({
   data: GameDataGeneration | null;
   server: number;
 }) {
+  if (result.skillOrderCardIds.length === 0) return null;
+  return (
+    <div className="result-detail-block">
+      <span className="result-detail-title">理论最高分技能顺序</span>
+      <div className="skill-order-list">
+        {result.skillOrderCardIds.map((cardId, index) => {
+          const actor = result.skillOrderActors?.[index];
+          const isEncore = index === result.skillOrderCardIds.length - 1;
+          const label = cardId > 0
+            ? cardDisplayName(data, cardId, server)
+            : actor?.startsWith("other")
+              ? `其他玩家 ${actor.replace("other", "")}`
+              : "外部技能";
+          return (
+            <div className="skill-order-step" key={`${index}-${cardId}-${actor ?? "self"}`}>
+              <span className="skill-order-index">{isEncore ? "ENCORE" : index + 1}</span>
+              <strong>{cardId > 0 ? `#${cardId}` : actor ?? "—"}</strong>
+              <span>{label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AreaItemConfiguration({
+  result,
+  data,
+  server,
+  areaItemLevels,
+}: {
+  result: BandoriTeamSearchResult;
+  data: GameDataGeneration | null;
+  server: number;
+  areaItemLevels: Map<number, number>;
+}) {
+  const ids = result.areaItemConfiguration.selectedAreaItemIds;
+  return (
+    <div className="result-detail-block">
+      <span className="result-detail-title">区域道具配置</span>
+      <div className="area-config-summary">
+        <span>{result.areaItemConfiguration.bandKey ?? "混合团"}</span>
+        <span>{result.areaItemConfiguration.attribute ?? "混合属性"}</span>
+        <span>{result.areaItemConfiguration.parameter ?? "通用参数"}</span>
+      </div>
+      <div className="area-item-list">
+        {ids.length === 0 && <span className="muted">无区域道具</span>}
+        {ids.map((areaItemId) => {
+          const master = data?.masters.areaItems[String(areaItemId)];
+          const name = isRecord(master)
+            ? regionalText(master.areaItemName, server, `Area Item #${areaItemId}`)
+            : `Area Item #${areaItemId}`;
+          const level = areaItemLevels.get(areaItemId);
+          return (
+            <span className="area-item-chip" key={areaItemId}>
+              {name}{level ? ` · Lv.${level}` : ""}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SearchResultCard({
+  result,
+  data,
+  server,
+  areaItemLevels,
+}: {
+  result: BandoriTeamSearchResult;
+  data: GameDataGeneration | null;
+  server: number;
+  areaItemLevels: Map<number, number>;
+}) {
+  const defaultPointOption = result.eventPointOptions.options.find(
+    (option) => option.key === result.eventPointOptions.defaultKey,
+  ) ?? result.eventPointOptions.options[0] ?? null;
+
   return (
     <article className="search-result-card">
       <div className="result-heading">
@@ -187,8 +336,20 @@ function SearchResultCard({
         <div><span>理论最低</span><strong>{formatNumber(result.minScore)}</strong></div>
         <div><span>最高分概率</span><strong>{formatProbability(result.maxScoreOrderCount, result.maxScoreOrderTotal)}</strong></div>
         {result.eventPoint !== null && <div><span>活动 Pt</span><strong>{formatNumber(result.eventPoint)}</strong></div>}
+        {result.eventType !== "none" && <div><span>活动加成</span><strong>{formatPointBonusRate(result.pointBonusRate)}</strong></div>}
+        {defaultPointOption && <div><span>Pt 场景</span><strong>{eventPointOptionLabel(defaultPointOption)}</strong></div>}
         <div><span>活动 / Live</span><strong>{EVENT_TYPE_LABELS[result.eventType]} · {liveTypeLabel(result.liveType, result.eventType)}</strong></div>
         <div><span>队长卡</span><strong>#{result.leaderCardId}</strong></div>
+      </div>
+
+      <div className="result-details-grid">
+        <SkillOrder result={result} data={data} server={server} />
+        <AreaItemConfiguration
+          result={result}
+          data={data}
+          server={server}
+          areaItemLevels={areaItemLevels}
+        />
       </div>
     </article>
   );
@@ -208,6 +369,9 @@ export default function App() {
   const [target, setTarget] = useState<BandoriTeamSearchTarget>("score");
   const [perfectRatePercent, setPerfectRatePercent] = useState(100);
   const [resultLimit, setResultLimit] = useState(10);
+  const [liveBoostCount, setLiveBoostCount] = useState<0 | 1 | 2 | 3>(3);
+  const [challengeCpCost, setChallengeCpCost] = useState<200 | 400 | 800 | 1600>(1600);
+  const [otherPlayersAveragePower, setOtherPlayersAveragePower] = useState(380_000);
   const [searchState, setSearchState] = useState<SearchState>("idle");
   const [searchMessage, setSearchMessage] = useState("");
   const [searchResponse, setSearchResponse] = useState<BandoriTeamSearchResponse | null>(null);
@@ -216,6 +380,11 @@ export default function App() {
   const server = profile?.profile.server ?? 3;
   const songs = useMemo(() => buildSongOptions(gameData, server), [gameData, server]);
   const events = useMemo(() => buildEventOptions(gameData, server), [gameData, server]);
+  const areaItemLevels = useMemo(() => buildAreaItemLevelMap(profile), [profile]);
+  const availableDifficulties = useMemo(
+    () => getAvailableDifficulties(gameData, songId),
+    [gameData, songId],
+  );
   const selectedEventType = useMemo<BandoriTeamSearchEventType>(() => {
     if (!gameData || eventId === null) return "none";
     const rawEvent = gameData.masters.events[String(eventId)];
@@ -280,6 +449,12 @@ export default function App() {
   }, [songId, songs]);
 
   useEffect(() => {
+    if (!availableDifficulties.includes(difficulty)) {
+      setDifficulty(availableDifficulties.includes("expert") ? "expert" : availableDifficulties[0] ?? "expert");
+    }
+  }, [availableDifficulties, difficulty]);
+
+  useEffect(() => {
     if (!allowedLiveTypes.includes(liveType)) {
       setLiveType(allowedLiveTypes[0] ?? "free");
     }
@@ -333,7 +508,14 @@ export default function App() {
         perfectRate: Math.max(0, Math.min(100, perfectRatePercent)) / 100,
         target,
         liveType,
-        maxSearchDurationMs: 15_000,
+        eventFormula: 2,
+        liveBoostCount,
+        challengeCpCost,
+        useSpecialRoomBonus: true,
+        otherPlayersAveragePower: liveType === "multi" ? otherPlayersAveragePower : undefined,
+        otherPlayerSkills: liveType === "multi" ? DEFAULT_OTHER_PLAYER_SKILLS : undefined,
+        encoreSkillSource: liveType === "multi" ? "self" : undefined,
+        maxSearchDurationMs: 30_000,
       });
       if (controller.signal.aborted) return;
       setSearchState("searching");
@@ -451,16 +633,20 @@ export default function App() {
 
             <div className="form-grid">
               <label className="field field-wide">
-                <span>歌曲</span>
-                <select value={songId ?? ""} onChange={(event) => setSongId(Number(event.currentTarget.value))} disabled={!gameData}>
-                  {songs.map((song) => <option key={song.id} value={song.id}>{song.label}</option>)}
-                </select>
+                <span>歌曲 · 可按名称或 ID 搜索</span>
+                <SearchableSelect
+                  value={songId}
+                  options={songs}
+                  onChange={setSongId}
+                  placeholder="输入歌曲名称或 ID…"
+                  disabled={!gameData}
+                />
               </label>
 
               <label className="field">
                 <span>难度</span>
                 <select value={difficulty} onChange={(event) => setDifficulty(event.currentTarget.value as BandoriTeamSearchDifficulty)}>
-                  {DIFFICULTIES.map((item) => <option key={item} value={item}>{DIFFICULTY_LABELS[item]}</option>)}
+                  {availableDifficulties.map((item) => <option key={item} value={item}>{DIFFICULTY_LABELS[item]}</option>)}
                 </select>
               </label>
 
@@ -473,11 +659,15 @@ export default function App() {
               </label>
 
               <label className="field field-wide">
-                <span>活动</span>
-                <select value={eventId ?? ""} onChange={(event) => setEventId(event.currentTarget.value ? Number(event.currentTarget.value) : null)} disabled={!gameData}>
-                  <option value="">不使用活动加成</option>
-                  {events.map((event) => <option key={event.id} value={event.id}>{event.label}</option>)}
-                </select>
+                <span>活动 · 可按名称或 ID 搜索</span>
+                <SearchableSelect
+                  value={eventId}
+                  options={events}
+                  onChange={setEventId}
+                  placeholder="输入活动名称或 ID…"
+                  emptyLabel="不使用活动加成"
+                  disabled={!gameData}
+                />
               </label>
 
               <label className="field">
@@ -496,6 +686,37 @@ export default function App() {
                 </select>
               </label>
 
+              {selectedEventType !== "none" && selectedEventType !== "medley" && liveType !== "challenge" && (
+                <label className="field">
+                  <span>Live Boost</span>
+                  <select value={liveBoostCount} onChange={(event) => setLiveBoostCount(Number(event.currentTarget.value) as 0 | 1 | 2 | 3)}>
+                    {[0, 1, 2, 3].map((value) => <option key={value} value={value}>{value} 火</option>)}
+                  </select>
+                </label>
+              )}
+
+              {selectedEventType === "challenge" && liveType === "challenge" && (
+                <label className="field">
+                  <span>Challenge CP</span>
+                  <select value={challengeCpCost} onChange={(event) => setChallengeCpCost(Number(event.currentTarget.value) as 200 | 400 | 800 | 1600)}>
+                    {[200, 400, 800, 1600].map((value) => <option key={value} value={value}>{value} CP</option>)}
+                  </select>
+                </label>
+              )}
+
+              {liveType === "multi" && (
+                <label className="field">
+                  <span>其他玩家平均综合力</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1000"
+                    value={otherPlayersAveragePower}
+                    onChange={(event) => setOtherPlayersAveragePower(Math.max(0, Number(event.currentTarget.value)))}
+                  />
+                </label>
+              )}
+
               <label className="field">
                 <span>PERFECT 率</span>
                 <div className="number-suffix">
@@ -510,6 +731,12 @@ export default function App() {
               </label>
             </div>
 
+            {selectedEventType !== "none" && selectedEventType !== "medley" && (
+              <p className="status-line">活动 Pt 使用 HHWX 当前 V3 公式；星光练习加成读取 Bestdori limitBreaks。特殊房参数加成已启用。</p>
+            )}
+            {liveType === "multi" && (
+              <p className="status-line">多人房其他四名玩家的技能暂按 HHWX 当前默认组（69 Lv.5 / 69 Lv.1 / 66 Lv.5 / 66 Lv.1），Encore 来源为自己；下一步会把这组参数也做成可编辑控件。</p>
+            )}
             {selectedEventType === "medley" && (
               <p className="status-line status-error">Medley 活动需要 HHWX 的三曲 Medley 搜索器；当前客户端只接入了单曲 exact-search，因此暂时禁止用单曲结果冒充 Medley 最优解。</p>
             )}
@@ -563,6 +790,7 @@ export default function App() {
               result={result}
               data={gameData}
               server={server}
+              areaItemLevels={areaItemLevels}
             />
           ))}
         </div>
