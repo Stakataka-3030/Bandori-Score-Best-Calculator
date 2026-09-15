@@ -1,0 +1,51 @@
+name: Fix scheduler same-time boundary
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/fix-scheduled-same-time-boundary.mjs"
+      - ".github/workflows/fix-scheduler-same-time-boundary.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scheduler-boundary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Apply same-time boundary fix
+        run: node scripts/fix-scheduled-same-time-boundary.mjs
+      - name: Verify shuffle and scheduler
+        run: |
+          npm run test:shuffle
+          npm run test:scheduler
+      - name: Build frontend
+        run: npm run build:web
+      - name: Commit tested fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$(git status --porcelain src/lib/bandori/team-builder/core/scoring.ts scripts/apply-skill-trigger-delay-patch.mjs)" ]]; then
+            echo "Boundary fix already applied."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/bandori/team-builder/core/scoring.ts scripts/apply-skill-trigger-delay-patch.mjs
+          git commit -m "Preserve same-time notes for unshifted skill triggers"
+          git pull --rebase origin main
+          git push origin HEAD:main
