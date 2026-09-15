@@ -55,7 +55,7 @@ export function resolveBandoriCardForServer<T extends object>(
   delete canonical.serverExtensions;
   for (const [key, value] of Object.entries(extension)) {
     if (value === null) delete canonical[key];
-    else canonical[key] = value;
+    else Object.assign(canonical, { [key]: value });
   }
   return canonical as T;
 }
