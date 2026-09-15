@@ -12,6 +12,7 @@ on:
       - "scripts/patch-medley-hydration-shuffle.mjs"
       - "scripts/patch-medley-search-layout.mjs"
       - "scripts/patch-medley-exact-tests.mjs"
+      - "scripts/patch-medley-tiny-oracle-layouts.mjs"
       - ".github/workflows/apply-medley-real-shuffle.yml"
 
 permissions:
@@ -44,6 +45,7 @@ jobs:
           node scripts/patch-medley-hydration-shuffle.mjs
           node scripts/patch-medley-search-layout.mjs
           node scripts/patch-medley-exact-tests.mjs
+          node scripts/patch-medley-tiny-oracle-layouts.mjs
 
       - name: Format Rust
         run: cargo fmt --all
