@@ -66,12 +66,17 @@ export type MedleySearchRunResult = {
 export type RunNativeMedleySearchOptions = {
   maxDurationMs?: number;
   memoryBudgetBytes?: number;
+  signal?: AbortSignal;
 };
 
 const DEFAULT_MEMORY_BUDGET_BYTES = 1024 * 1024 * 1024;
 
 function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function abortError(): DOMException {
+  return new DOMException("Medley search cancelled", "AbortError");
 }
 
 export async function runNativeMedleySearch(
@@ -81,17 +86,33 @@ export async function runNativeMedleySearch(
   if (!isTauriRuntime()) {
     throw new Error("Medley 原生搜索需要在 Tauri 桌面客户端中运行");
   }
+  if (options.signal?.aborted) throw abortError();
+
   const maxDurationMs = Math.max(1_000, Math.min(3_600_000, Math.trunc(options.maxDurationMs ?? 30_000)));
   const memoryBudgetBytes = Math.max(
     16 * 1024,
     Math.min(2 * 1024 * 1024 * 1024, Math.trunc(options.memoryBudgetBytes ?? DEFAULT_MEMORY_BUDGET_BYTES)),
   );
-  const raw = await invoke<string>("run_medley_search", {
-    request: {
-      inputJson: JSON.stringify(input),
-      maxDurationMs,
-      memoryBudgetBytes,
-    },
-  });
-  return JSON.parse(raw) as MedleySearchRunResult;
+  const requestId = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `medley-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const onAbort = () => {
+    void invoke<boolean>("cancel_medley_search", { requestId }).catch(() => false);
+  };
+  options.signal?.addEventListener("abort", onAbort, { once: true });
+
+  try {
+    const raw = await invoke<string>("run_medley_search", {
+      request: {
+        requestId,
+        inputJson: JSON.stringify(input),
+        maxDurationMs,
+        memoryBudgetBytes,
+      },
+    });
+    if (options.signal?.aborted) throw abortError();
+    return JSON.parse(raw) as MedleySearchRunResult;
+  } finally {
+    options.signal?.removeEventListener("abort", onAbort);
+  }
 }
