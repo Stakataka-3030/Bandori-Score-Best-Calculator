@@ -21,5 +21,12 @@ replaceOne(
   "real-shuffle first-five upper",
 );
 
+// Upstream fast-upper tests construct an exact candidate directly. The real-layout
+// evaluator takes prepared songs before the five-card set.
+text = text.replaceAll(
+  `evaluate_candidate(\n                                &input,\n                                &input.area_configurations[0],\n                                members,\n                                &songs,\n                            )`,
+  `evaluate_candidate(\n                                &input,\n                                &input.area_configurations[0],\n                                &songs,\n                                members,\n                            )`,
+);
+
 await writeFile(path, text, "utf8");
 console.log(`patched ${path}`);
