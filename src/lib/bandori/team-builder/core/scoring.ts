@@ -13,6 +13,12 @@ import type {
 import { JUDGE_PERCENT, JUDGE_RANK } from "./constants";
 import { getScoreComboMultiplier } from "./chart";
 import { buildPermutations, clamp, getRegionalNumber } from "./utils";
+import {
+  BANDORI_SKILL_SHUFFLE_PATH_COUNT,
+  getExpectedTriggerContributionForLayout,
+  getMaximumExpectedSkillContributionAcrossInitialSlots,
+  scoreWeightedSkillLayout,
+} from "./skill-shuffle";
 import type { BandoriTeamSearchInput, BandoriTeamSearchSkillOrderActor, PreparedChart, ScoreCalculationCache, ScoreComboOptions, SearchCard, SkillUpperRates } from "./types";
 
 const SKILL_ORDER_PERMUTATIONS = buildPermutations([0, 1, 2, 3, 4]);
@@ -495,6 +501,9 @@ export type SkillWindowScoreResult = {
   skillOrderCardIds?: number[];
   skillOrderActors?: BandoriTeamSearchSkillOrderActor[];
   roomScoreRatePerPower?: number;
+  // Initial team slots 0..4 mapped to indexes in the evaluated five-card array.
+  // Slot 2 is the leader slot. Present for the real solo/free-live shuffle model.
+  teamLayoutCardIndexes?: number[];
 };
 
 function isEligibleLeaderIndex(eligibleLeaderIndexes: readonly boolean[] | undefined, leaderIndex: number): boolean {
@@ -1093,8 +1102,10 @@ export function calculateBestScoreForNonOverlappingSkillWindows(
   shouldCalculateDetailed?: (targetOnlyResult: SkillWindowScoreResult) => boolean,
   eligibleLeaderIndexes?: readonly boolean[],
 ): SkillWindowScoreResult {
-  // Solo/normal scoring assumes the 5 normal skill windows do not overlap, so trigger order only maps cards onto windows.
-  // When encoreSkill is defined, the 6th window is fixed to that external/leader skill.
+  // The first five solo/free-live skill activations use the game's position-dependent
+  // shuffle, not a uniform 5! permutation. We first choose the initial five-card layout
+  // by exact expected value, then enumerate only the 96 reachable weighted trigger orders
+  // for max/min/probability details. The sixth window remains the leader/encore window.
   const judgeList = getCachedJudgeList(chart.notesCount, perfectRate, cache);
   const relevantSkills = encoreSkill === undefined ? skills : [...skills, encoreSkill];
   const canUseConstantOnlyScoring = relevantSkills.every((skill) => (
@@ -1115,13 +1126,9 @@ export function calculateBestScoreForNonOverlappingSkillWindows(
   const zeroContributions = [0, 0, 0, 0, 0, 0];
   const contributionCache = new Map<string, number[]>();
   const getContributions = (skill: ResolvedBandoriSkill | null | undefined): number[] => {
-    if (!skill) {
-      return zeroContributions;
-    }
+    if (!skill) return zeroContributions;
     const cached = contributionCache.get(skill.cacheKey);
-    if (cached) {
-      return cached;
-    }
+    if (cached) return cached;
     const contributions = getCachedSkillWindowContributions(
       chart,
       bandPower,
@@ -1142,12 +1149,7 @@ export function calculateBestScoreForNonOverlappingSkillWindows(
           );
           return Array.from(windowContributions);
         }
-        if (canUseConstantOnlyScoring) {
-          return zeroContributions;
-        }
-        if (!innerScores) {
-          return zeroContributions;
-        }
+        if (canUseConstantOnlyScoring || !innerScores) return zeroContributions;
         return Array.from({ length: 6 }, (_, slotIndex) => (
           calculateSkillExtraContribution(
             chart,
@@ -1165,122 +1167,70 @@ export function calculateBestScoreForNonOverlappingSkillWindows(
     contributionCache.set(skill.cacheKey, contributions);
     return contributions;
   };
+
   const contributions = skills.map((skill) => getContributions(skill));
-  const averageTriggerContribution = contributions.reduce((sum, contribution) => (
-    sum + (contribution[0] + contribution[1] + contribution[2] + contribution[3] + contribution[4]) / 5
-  ), 0);
+  const externalEncoreContribution = encoreSkill === undefined
+    ? null
+    : getContributions(encoreSkill)[5] ?? 0;
 
-  let targetOnlyResult: SkillWindowScoreResult | null = null;
-  if (encoreSkill !== undefined) {
-    if (!isEligibleLeaderIndex(eligibleLeaderIndexes, 0)) {
-      return createEmptySkillWindowScoreResult();
+  let selectedLayout: number[] | null = null;
+  let selectedLeaderIndex = -1;
+  let selectedRawAverageScore = Number.NEGATIVE_INFINITY;
+
+  // SKILL_ORDER_PERMUTATIONS is also the complete set of 5! possible initial card layouts.
+  // layout[slot] is the evaluated-card index placed in original team slot 0..4.
+  for (const layout of SKILL_ORDER_PERMUTATIONS) {
+    const leaderIndex = layout[2];
+    if (!isEligibleLeaderIndex(eligibleLeaderIndexes, leaderIndex)) continue;
+    const expectedTriggerContribution = getExpectedTriggerContributionForLayout(contributions, layout);
+    const encoreContribution = externalEncoreContribution ?? (contributions[leaderIndex]?.[5] ?? 0);
+    const rawAverageScore = baseScore + expectedTriggerContribution + encoreContribution;
+    if (rawAverageScore > selectedRawAverageScore) {
+      selectedRawAverageScore = rawAverageScore;
+      selectedLayout = layout;
+      selectedLeaderIndex = leaderIndex;
     }
-
-    const leaderContribution = getContributions(encoreSkill)[5];
-    const averageScore = Math.floor(baseScore + averageTriggerContribution + leaderContribution);
-    targetOnlyResult = {
-      score: averageScore,
-      averageScore,
-      minScore: averageScore,
-      maxScoreOrderCount: 0,
-      maxScoreOrderTotal: SKILL_ORDER_PERMUTATIONS.length,
-      leaderIndex: 0,
-      permutation: SKILL_ORDER_PERMUTATIONS[0],
-    };
-  } else {
-    let bestAverageScore = Number.NEGATIVE_INFINITY;
-    let selectedLeaderIndex = 0;
-    for (let leaderIndex = 0; leaderIndex < skills.length; leaderIndex += 1) {
-      if (!isEligibleLeaderIndex(eligibleLeaderIndexes, leaderIndex)) {
-        continue;
-      }
-
-      const averageScore = Math.floor(baseScore + averageTriggerContribution + contributions[leaderIndex][5]);
-      if (averageScore > bestAverageScore) {
-        bestAverageScore = averageScore;
-        selectedLeaderIndex = leaderIndex;
-      }
-    }
-    targetOnlyResult = {
-      score: bestAverageScore,
-      averageScore: bestAverageScore,
-      minScore: bestAverageScore,
-      maxScoreOrderCount: 0,
-      maxScoreOrderTotal: SKILL_ORDER_PERMUTATIONS.length,
-      leaderIndex: selectedLeaderIndex,
-      permutation: SKILL_ORDER_PERMUTATIONS[0],
-    };
   }
+
+  if (!selectedLayout || selectedLeaderIndex < 0) {
+    return createEmptySkillWindowScoreResult();
+  }
+
+  const averageScore = Math.floor(selectedRawAverageScore);
+  const targetOnlyResult: SkillWindowScoreResult = {
+    score: averageScore,
+    averageScore,
+    rawAverageScore: selectedRawAverageScore,
+    minScore: averageScore,
+    maxScoreOrderCount: 0,
+    maxScoreOrderTotal: BANDORI_SKILL_SHUFFLE_PATH_COUNT,
+    leaderIndex: selectedLeaderIndex,
+    permutation: SKILL_ORDER_PERMUTATIONS[0],
+    teamLayoutCardIndexes: [...selectedLayout],
+  };
 
   if (
     targetOnly
-    || (
-      targetOnlyResult
-      && shouldCalculateDetailed
-      && !shouldCalculateDetailed(targetOnlyResult)
-    )
+    || (shouldCalculateDetailed && !shouldCalculateDetailed(targetOnlyResult))
   ) {
     return targetOnlyResult;
   }
 
-  const assignment = optimizeSkillAssignment(contributions);
-  const bestTriggerScore = assignment.maxScore;
-  const minTriggerScore = assignment.minScore;
-  const bestTriggerScoreOrderCount = assignment.maxOrderCount;
-  const bestTriggerPermutation = assignment.permutation;
-  let bestAverageScore = Number.NEGATIVE_INFINITY;
-  let selectedMaxScore = Number.NEGATIVE_INFINITY;
-  let selectedMinScore = 0;
-  let selectedLeaderIndex = 0;
-  let selectedPermutation = bestTriggerPermutation;
-  let selectedMaxScoreOrderCount = 0;
-
-  if (encoreSkill !== undefined) {
-    const leaderContribution = getContributions(encoreSkill)[5];
-    return {
-      score: baseScore + leaderContribution + bestTriggerScore,
-      averageScore: Math.floor(baseScore + averageTriggerContribution + leaderContribution),
-      minScore: baseScore + leaderContribution + minTriggerScore,
-      maxScoreOrderCount: bestTriggerScoreOrderCount,
-      maxScoreOrderTotal: SKILL_ORDER_PERMUTATIONS.length,
-      leaderIndex: 0,
-      permutation: bestTriggerPermutation,
-    };
-  }
-
-  for (let leaderIndex = 0; leaderIndex < skills.length; leaderIndex += 1) {
-    if (!isEligibleLeaderIndex(eligibleLeaderIndexes, leaderIndex)) {
-      continue;
-    }
-
-    const leaderContribution = contributions[leaderIndex][5];
-    const leaderAverageScore = Math.floor(baseScore + averageTriggerContribution + leaderContribution);
-    if (leaderAverageScore < bestAverageScore) {
-      continue;
-    }
-
-    const leaderBestScore = baseScore + leaderContribution + bestTriggerScore;
-    if (
-      leaderAverageScore > bestAverageScore
-      || (leaderAverageScore === bestAverageScore && leaderBestScore > selectedMaxScore)
-    ) {
-      bestAverageScore = leaderAverageScore;
-      selectedMaxScore = leaderBestScore;
-      selectedMinScore = baseScore + leaderContribution + minTriggerScore;
-      selectedLeaderIndex = leaderIndex;
-      selectedPermutation = bestTriggerPermutation;
-      selectedMaxScoreOrderCount = bestTriggerScoreOrderCount;
-    }
-  }
-
+  const weighted = scoreWeightedSkillLayout(contributions, selectedLayout);
+  const encoreContribution = externalEncoreContribution
+    ?? (contributions[selectedLeaderIndex]?.[5] ?? 0);
   return {
-    score: selectedMaxScore,
-    averageScore: bestAverageScore,
-    minScore: selectedMinScore,
-    maxScoreOrderCount: selectedMaxScoreOrderCount,
-    maxScoreOrderTotal: SKILL_ORDER_PERMUTATIONS.length,
+    score: baseScore + weighted.maxTriggerContribution + encoreContribution,
+    averageScore,
+    rawAverageScore: selectedRawAverageScore,
+    minScore: baseScore + weighted.minTriggerContribution + encoreContribution,
+    // Under the real shuffle these fields are RNG-path weights, so x/1024 is the
+    // exact probability of reaching the displayed maximum score.
+    maxScoreOrderCount: weighted.maxPathWeight,
+    maxScoreOrderTotal: BANDORI_SKILL_SHUFFLE_PATH_COUNT,
     leaderIndex: selectedLeaderIndex,
-    permutation: selectedPermutation,
+    permutation: weighted.representativeTriggerCardIndexes,
+    teamLayoutCardIndexes: [...selectedLayout],
   };
 }
 
@@ -1332,20 +1282,18 @@ export function calculateSkillUpperRatesPerPower(
   server: number,
   comboOptions?: ScoreComboOptions,
 ): SkillUpperRates {
-  // This bound is intentionally optimistic: PERFECT judgment, best window, and maximum skill value for safe pruning and ordering.
+  // This bound is intentionally optimistic. Under the real shuffle, trigger expectation
+  // depends on the initial team slot, so averageRate uses the best possible initial-slot
+  // expectation. This can overestimate a complete layout but can never prune the optimum.
   const valuePercent = getSkillMaxValuePercent(skill, server);
   const durationSeconds = getSkillDurationSeconds(skill, skillLevel, server);
   if (valuePercent <= 0 || durationSeconds <= 0 || chart.notesCount === 0) {
-    return {
-      maxRate: 0,
-      averageRate: 0,
-      leaderRate: 0,
-    };
+    return { maxRate: 0, averageRate: 0, leaderRate: 0 };
   }
 
   const baseScorePerPower = 3 * (1 + (chart.playLevel - 5) / 100) / chart.notesCount;
   let bestWindowRate = 0;
-  let triggerWindowRateSum = 0;
+  const triggerWindowRates = [0, 0, 0, 0, 0];
   let leaderWindowRate = 0;
   for (let slotIndex = 0; slotIndex < 6; slotIndex += 1) {
     const start = chart.skillStartNotes[slotIndex] ?? chart.notesCount;
@@ -1356,17 +1304,15 @@ export function calculateSkillUpperRatesPerPower(
       windowRate += baseScorePerPower * JUDGE_PERCENT.perfect * getScoreComboMultiplier(noteIndex, comboOptions) * (note.fever ? 2 : 1);
     }
     bestWindowRate = Math.max(bestWindowRate, windowRate);
-    if (slotIndex < 5) {
-      triggerWindowRateSum += windowRate;
-    } else {
-      leaderWindowRate = windowRate;
-    }
+    if (slotIndex < 5) triggerWindowRates[slotIndex] = windowRate;
+    else leaderWindowRate = windowRate;
   }
 
+  const multiplier = valuePercent / 100;
   return {
-    maxRate: bestWindowRate * (valuePercent / 100),
-    averageRate: (triggerWindowRateSum / 5) * (valuePercent / 100),
-    leaderRate: leaderWindowRate * (valuePercent / 100),
+    maxRate: bestWindowRate * multiplier,
+    averageRate: getMaximumExpectedSkillContributionAcrossInitialSlots(triggerWindowRates) * multiplier,
+    leaderRate: leaderWindowRate * multiplier,
   };
 }
 
@@ -1386,20 +1332,17 @@ export function calculateResolvedSkillUpperRatesPerPower(
   skill: ResolvedBandoriSkill | null,
   comboOptions?: ScoreComboOptions,
 ): SkillUpperRates {
-  // Resolved skills can include same-band/same-attribute conditions, so these feed tighter context-partitioned bounds.
+  // Resolved conditional skills use the same optimistic best-initial-slot expectation so
+  // context-partitioned DFS bounds remain safe under the non-uniform real shuffle.
   const valuePercent = getResolvedSkillMaxScoreUpPercent(skill);
   const durationSeconds = skill?.durationSeconds ?? 0;
   if (valuePercent <= 0 || durationSeconds <= 0 || chart.notesCount === 0) {
-    return {
-      maxRate: 0,
-      averageRate: 0,
-      leaderRate: 0,
-    };
+    return { maxRate: 0, averageRate: 0, leaderRate: 0 };
   }
 
   const baseScorePerPower = 3 * (1 + (chart.playLevel - 5) / 100) / chart.notesCount;
   let bestWindowRate = 0;
-  let triggerWindowRateSum = 0;
+  const triggerWindowRates = [0, 0, 0, 0, 0];
   let leaderWindowRate = 0;
   for (let slotIndex = 0; slotIndex < 6; slotIndex += 1) {
     const start = chart.skillStartNotes[slotIndex] ?? chart.notesCount;
@@ -1410,16 +1353,14 @@ export function calculateResolvedSkillUpperRatesPerPower(
       windowRate += baseScorePerPower * JUDGE_PERCENT.perfect * getScoreComboMultiplier(noteIndex, comboOptions) * (note.fever ? 2 : 1);
     }
     bestWindowRate = Math.max(bestWindowRate, windowRate);
-    if (slotIndex < 5) {
-      triggerWindowRateSum += windowRate;
-    } else {
-      leaderWindowRate = windowRate;
-    }
+    if (slotIndex < 5) triggerWindowRates[slotIndex] = windowRate;
+    else leaderWindowRate = windowRate;
   }
 
+  const multiplier = valuePercent / 100;
   return {
-    maxRate: bestWindowRate * (valuePercent / 100),
-    averageRate: (triggerWindowRateSum / 5) * (valuePercent / 100),
-    leaderRate: leaderWindowRate * (valuePercent / 100),
+    maxRate: bestWindowRate * multiplier,
+    averageRate: getMaximumExpectedSkillContributionAcrossInitialSlots(triggerWindowRates) * multiplier,
+    leaderRate: leaderWindowRate * multiplier,
   };
 }

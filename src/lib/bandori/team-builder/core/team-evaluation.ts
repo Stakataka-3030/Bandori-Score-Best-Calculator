@@ -263,6 +263,8 @@ export function evaluateTeam(options: EvaluateTeamOptions): BandoriTeamSearchRes
       getCardInstanceKey(cards[best.leaderIndex]),
     ];
   const skillOrderActors = best.skillOrderActors;
+  const teamLayoutCardIds = best.teamLayoutCardIndexes?.map((cardIndex) => cards[cardIndex].cardId);
+  const teamLayoutCardInstanceKeys = best.teamLayoutCardIndexes?.map((cardIndex) => getCardInstanceKey(cards[cardIndex]));
   const baseCardPower = cards.reduce((sum, card) => sum + getCoreBaseCardPower(card), 0);
   const userAreaItemsById = toAreaItemStateMap(input.userAreaItems);
   const areaItemResult = calculateBandoriSelectedAreaItemPower(
@@ -308,6 +310,8 @@ export function evaluateTeam(options: EvaluateTeamOptions): BandoriTeamSearchRes
     target,
     leaderCardId: cards[best.leaderIndex].cardId,
     leaderCardInstanceKey: getCardInstanceKey(cards[best.leaderIndex]),
+    teamLayoutCardIds,
+    teamLayoutCardInstanceKeys,
     skillOrderCardIds,
     skillOrderCardInstanceKeys,
     skillOrderActors,

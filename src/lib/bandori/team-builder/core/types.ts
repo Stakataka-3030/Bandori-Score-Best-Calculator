@@ -104,6 +104,9 @@ export type BandoriTeamSearchResult = {
   target: BandoriTeamSearchTarget;
   leaderCardId: number;
   leaderCardInstanceKey?: string;
+  // Optimal initial team slots 0..4; slot 2 is the leader.
+  teamLayoutCardIds?: number[];
+  teamLayoutCardInstanceKeys?: string[];
   skillOrderCardIds: number[];
   skillOrderCardInstanceKeys?: string[];
   skillOrderActors?: BandoriTeamSearchSkillOrderActor[];
