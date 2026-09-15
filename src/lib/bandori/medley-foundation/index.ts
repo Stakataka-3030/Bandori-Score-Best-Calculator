@@ -31,6 +31,7 @@ export type {
   FixedMedleySourceInputV1,
   FixedSongSourceSelectionV1,
   FixedTeamSourceSelectionV1,
+  MedleyDifficulty,
   MedleySearchInputV1,
   MedleySearchSourceInputV1,
   SearchCardSkillContextsV1,
