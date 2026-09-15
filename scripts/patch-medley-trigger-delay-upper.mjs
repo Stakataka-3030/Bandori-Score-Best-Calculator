@@ -32,14 +32,29 @@ const afterSongs = `        // A duration's exact windows are traversed once, ne
 if (!source.includes(afterSongs)) throw new Error("fast-upper song marker missing");
 source = source.replace(
   afterSongs,
-`        let song_can_shift = std::array::from_fn::<_, 3, _>(|slot| {
+`        // Bound each activation's delayed start separately. earliest is the chart
+        // trigger itself. latest recursively assumes every preceding activation uses
+        // the longest skill in the entire eligible card pool, which is reachable or
+        // later than every real schedule. A skill's real note window is therefore a
+        // subset of [trigger+1, latest+duration]. Summing that whole union is looser
+        // than an exact sliding window but remains a rigorous upper bound while
+        // preserving far more positional information than an anywhere-in-chart bound.
+        let latest_starts = std::array::from_fn::<_, 3, _>(|slot| {
             let song = &input.songs[slot];
-            (1..6).any(|activation| {
-                let previous = song.notes[triggers[slot][activation - 1]].time_seconds;
+            let mut latest = [0.0_f64; 6];
+            for activation in 0..6 {
                 let nominal = song.notes[triggers[slot][activation]].time_seconds;
-                nominal + 1e-9
-                    < previous + maximum_skill_duration + SKILL_TRIGGER_GUARD_SECONDS
-            })
+                latest[activation] = if activation == 0 {
+                    nominal
+                } else {
+                    nominal.max(
+                        latest[activation - 1]
+                            + maximum_skill_duration
+                            + SKILL_TRIGGER_GUARD_SECONDS,
+                    )
+                };
+            }
+            latest
         });
 
 ` + afterSongs,
@@ -67,41 +82,24 @@ const oldCoverage = `                    let mut coverage = [[0.0; 6]; 3];
 const newCoverage = `                    let mut coverage = [[0.0; 6]; 3];
                     for slot in 0..3 {
                         let song = &input.songs[slot];
-                        if song_can_shift[slot] {
-                            // Once any earlier member can delay a later trigger, that later
-                            // skill may start away from every nominal trigger time. Use the
-                            // best duration-sized window anywhere in the chart for all six
-                            // activations. Every candidate window is summed directly with
-                            // upward rounding: subtracting an upward-rounded prefix would not
-                            // itself be a rigorous upper bound.
-                            let mut best = 0.0_f64;
-                            for start in 0..song.notes.len() {
-                                let end = checked_finite(
-                                    song.notes[start].time_seconds + skill.duration_seconds,
-                                )?;
-                                let mut candidate = 0.0_f64;
-                                for note_index in start..song.notes.len() {
-                                    if song.notes[note_index].time_seconds > end {
-                                        break;
-                                    }
-                                    candidate = add_up(candidate, alphas[slot][note_index])?;
-                                }
-                                best = best.max(candidate);
-                            }
-                            coverage[slot].fill(best);
-                        } else {
-                            for activation_index in 0..6 {
-                                let trigger = triggers[slot][activation_index];
-                                let end = checked_finite(
-                                    song.notes[trigger].time_seconds + skill.duration_seconds,
-                                )?;
-                                for (note, alpha) in
-                                    song.notes.iter().zip(&alphas[slot]).skip(trigger + 1)
-                                {
-                                    if note.time_seconds <= end {
-                                        coverage[slot][activation_index] =
-                                            add_up(coverage[slot][activation_index], *alpha)?;
-                                    }
+                        for activation_index in 0..6 {
+                            let trigger = triggers[slot][activation_index];
+                            let latest_end = checked_finite(
+                                latest_starts[slot][activation_index] + skill.duration_seconds,
+                            )?;
+                            // Actual activation starts can only move later than the
+                            // nominal trigger. Starting at trigger+1 includes every note
+                            // any delayed schedule could possibly score, while excluding
+                            // the trigger entity itself. Direct upward addition makes this
+                            // a safe superset bound without prefix-subtraction rounding.
+                            for (note, alpha) in
+                                song.notes.iter().zip(&alphas[slot]).skip(trigger + 1)
+                            {
+                                if note.time_seconds <= latest_end {
+                                    coverage[slot][activation_index] =
+                                        add_up(coverage[slot][activation_index], *alpha)?;
+                                } else {
+                                    break;
                                 }
                             }
                         }
