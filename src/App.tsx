@@ -1,14 +1,14 @@
 import { useState } from "react";
-import { decodeBestdoriProfile, type NormalizedBestdoriProfile } from "@/lib/bestdori-profile-codec";
+import { importProfileFile, type ImportedProfile } from "@/lib/profile-import";
 
 export default function App() {
-  const [profile, setProfile] = useState<NormalizedBestdoriProfile | null>(null);
+  const [profile, setProfile] = useState<ImportedProfile | null>(null);
   const [error, setError] = useState("");
 
   async function importProfile(file: File) {
     try {
       const parsed = JSON.parse(await file.text());
-      setProfile(decodeBestdoriProfile(parsed));
+      setProfile(importProfileFile(parsed));
       setError("");
     } catch (cause) {
       setProfile(null);
@@ -21,7 +21,7 @@ export default function App() {
       <header>
         <p className="eyebrow">Portable baseline</p>
         <h1>Bandori Score Best Calculator</h1>
-        <p>纯本地读取 Bestdori / HHWX 导出档案。当前阶段只建立可移植基线，尚未修改 HHWX 计分规则。</p>
+        <p>纯本地读取 Bestdori / HHWX 导出档案。不会按 UID 查询游戏账号，也不会连接 HHWX user-fetcher。</p>
       </header>
 
       <section className="panel">
@@ -39,9 +39,10 @@ export default function App() {
 
         {profile && (
           <div className="result">
-            <strong>{profile.name}</strong>
-            <span>服务器索引：{profile.server}</span>
-            <span>卡牌数量：{profile.cards.length}</span>
+            <strong>{profile.profile.name}</strong>
+            <span>服务器索引：{profile.profile.server}</span>
+            <span>卡牌数量：{profile.profile.cards.length}</span>
+            <span>HHWX 精确扩展：{profile.hasHhwxExtension ? "已读取" : "无"}</span>
           </div>
         )}
         {error && <p className="error">{error}</p>}
