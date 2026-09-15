@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import BestdoriCardThumb from "@/components/BestdoriCardThumb";
 import {
+  allowedLiveTypesForEvent,
   createBandoriSearchInput,
+  eventTypeFromBestdori,
   loadCurrentGameData,
   syncBestdoriMasters,
   syncBestdoriMastersIfStale,
@@ -9,6 +11,8 @@ import {
 } from "@/data";
 import type {
   BandoriTeamSearchDifficulty,
+  BandoriTeamSearchEventType,
+  BandoriTeamSearchLiveType,
   BandoriTeamSearchResponse,
   BandoriTeamSearchResult,
   BandoriTeamSearchTarget,
@@ -39,6 +43,28 @@ const DIFFICULTY_LABELS: Record<BandoriTeamSearchDifficulty, string> = {
   expert: "Expert",
   special: "Special",
 };
+
+const EVENT_TYPE_LABELS: Record<BandoriTeamSearchEventType, string> = {
+  none: "无活动",
+  story: "通常活动 / Story",
+  challenge: "Challenge Live",
+  versus: "VS Live",
+  live_try: "Live Goals / Live Try",
+  mission_live: "Mission Live",
+  festival: "Team Live Festival",
+  medley: "Medley Live",
+};
+
+function liveTypeLabel(
+  liveType: BandoriTeamSearchLiveType,
+  eventType: BandoriTeamSearchEventType,
+): string {
+  if (eventType === "medley") return "Medley Live";
+  if (liveType === "free") return "Free Live";
+  if (liveType === "multi") return "Multi Live";
+  if (liveType === "challenge") return "Challenge Live";
+  return eventType === "festival" ? "Team Live" : "VS Live";
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -161,6 +187,7 @@ function SearchResultCard({
         <div><span>理论最低</span><strong>{formatNumber(result.minScore)}</strong></div>
         <div><span>最高分概率</span><strong>{formatProbability(result.maxScoreOrderCount, result.maxScoreOrderTotal)}</strong></div>
         {result.eventPoint !== null && <div><span>活动 Pt</span><strong>{formatNumber(result.eventPoint)}</strong></div>}
+        <div><span>活动 / Live</span><strong>{EVENT_TYPE_LABELS[result.eventType]} · {liveTypeLabel(result.liveType, result.eventType)}</strong></div>
         <div><span>队长卡</span><strong>#{result.leaderCardId}</strong></div>
       </div>
     </article>
@@ -177,6 +204,7 @@ export default function App() {
   const [songId, setSongId] = useState<number | null>(null);
   const [difficulty, setDifficulty] = useState<BandoriTeamSearchDifficulty>("expert");
   const [eventId, setEventId] = useState<number | null>(null);
+  const [liveType, setLiveType] = useState<BandoriTeamSearchLiveType>("free");
   const [target, setTarget] = useState<BandoriTeamSearchTarget>("score");
   const [perfectRatePercent, setPerfectRatePercent] = useState(100);
   const [resultLimit, setResultLimit] = useState(10);
@@ -188,6 +216,15 @@ export default function App() {
   const server = profile?.profile.server ?? 3;
   const songs = useMemo(() => buildSongOptions(gameData, server), [gameData, server]);
   const events = useMemo(() => buildEventOptions(gameData, server), [gameData, server]);
+  const selectedEventType = useMemo<BandoriTeamSearchEventType>(() => {
+    if (!gameData || eventId === null) return "none";
+    const rawEvent = gameData.masters.events[String(eventId)];
+    return eventTypeFromBestdori(isRecord(rawEvent) ? rawEvent.eventType : null);
+  }, [eventId, gameData]);
+  const allowedLiveTypes = useMemo(
+    () => allowedLiveTypesForEvent(selectedEventType),
+    [selectedEventType],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -242,6 +279,12 @@ export default function App() {
     if (songId === null && songs.length > 0) setSongId(songs[0].id);
   }, [songId, songs]);
 
+  useEffect(() => {
+    if (!allowedLiveTypes.includes(liveType)) {
+      setLiveType(allowedLiveTypes[0] ?? "free");
+    }
+  }, [allowedLiveTypes, liveType]);
+
   async function refreshGameData() {
     setSyncState("syncing");
     setSyncMessage("正在检查 Bestdori 更新…");
@@ -289,7 +332,7 @@ export default function App() {
         resultLimit,
         perfectRate: Math.max(0, Math.min(100, perfectRatePercent)) / 100,
         target,
-        liveType: "free",
+        liveType,
         maxSearchDurationMs: 15_000,
       });
       if (controller.signal.aborted) return;
@@ -321,7 +364,14 @@ export default function App() {
     abortRef.current?.abort();
   }
 
-  const canSearch = Boolean(profile && gameData && songId !== null && searchState !== "preparing" && searchState !== "searching");
+  const canSearch = Boolean(
+    profile
+    && gameData
+    && songId !== null
+    && selectedEventType !== "medley"
+    && searchState !== "preparing"
+    && searchState !== "searching"
+  );
 
   return (
     <main className="app-shell">
@@ -431,6 +481,22 @@ export default function App() {
               </label>
 
               <label className="field">
+                <span>活动类型</span>
+                <select value={selectedEventType} disabled>
+                  <option value={selectedEventType}>{EVENT_TYPE_LABELS[selectedEventType]}</option>
+                </select>
+              </label>
+
+              <label className="field">
+                <span>Live 类型</span>
+                <select value={liveType} onChange={(event) => setLiveType(event.currentTarget.value as BandoriTeamSearchLiveType)}>
+                  {allowedLiveTypes.map((item) => (
+                    <option key={item} value={item}>{liveTypeLabel(item, selectedEventType)}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field">
                 <span>PERFECT 率</span>
                 <div className="number-suffix">
                   <input type="number" min="0" max="100" step="1" value={perfectRatePercent} onChange={(event) => setPerfectRatePercent(Number(event.currentTarget.value))} />
@@ -443,6 +509,10 @@ export default function App() {
                 <input type="number" min="1" max="50" step="1" value={resultLimit} onChange={(event) => setResultLimit(Math.max(1, Math.min(50, Number(event.currentTarget.value))))} />
               </label>
             </div>
+
+            {selectedEventType === "medley" && (
+              <p className="status-line status-error">Medley 活动需要 HHWX 的三曲 Medley 搜索器；当前客户端只接入了单曲 exact-search，因此暂时禁止用单曲结果冒充 Medley 最优解。</p>
+            )}
 
             <div className="search-actions">
               <button type="button" className="primary-button search-button" disabled={!canSearch} onClick={() => void startSearch()}>
