@@ -13,8 +13,9 @@
     "vendor:hhwx": "node scripts/vendor-hhwx.mjs",
     "vendor:hhwx:check": "node scripts/vendor-hhwx.mjs --check",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "icons": "tauri icon src-tauri/app-icon.svg",
+    "tauri:dev": "npm run icons && tauri dev",
+    "tauri:build": "npm run icons && tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
