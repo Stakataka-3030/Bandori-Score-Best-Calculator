@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
+    "test:shuffle": "node scripts/verify-skill-shuffle.mjs",
     "build:web": "npm run typecheck && vite build",
-    "build": "npm run build:web",
+    "build": "npm run test:shuffle && npm run build:web",
     "preview": "vite preview",
     "vendor:hhwx": "node scripts/vendor-hhwx.mjs",
     "vendor:hhwx:check": "node scripts/vendor-hhwx.mjs --check",
