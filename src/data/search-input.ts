@@ -11,6 +11,7 @@ import type {
 import type {
   BandoriTeamSearchDifficulty,
   BandoriTeamSearchEventType,
+  BandoriTeamSearchExternalSkill,
   BandoriTeamSearchInput,
   BandoriTeamSearchLiveType,
   BandoriTeamSearchTarget,
@@ -168,6 +169,8 @@ function eventBonusFromBestdori(value: unknown): BandoriEventBonus | null {
     techniquePercent: finite(characterParameter?.technique),
     visualPercent: finite(characterParameter?.visual),
     members: Array.isArray(value.members) ? value.members : [],
+    // Bestdori calls Master Rank / 星光练习 event bonuses `limitBreaks`.
+    // The HHWX core matches these entries by card rarity + masterRank.
     limitBreaks: Array.isArray(value.limitBreaks) ? value.limitBreaks : [],
   };
 }
@@ -186,6 +189,10 @@ export type CreateBandoriSearchInputOptions = {
   useSpecialRoomBonus?: boolean;
   roomPower?: number;
   otherPlayersAveragePower?: number;
+  otherPlayerSkills?: BandoriTeamSearchExternalSkill[];
+  encoreSkillSource?: "self" | "other1" | "other2" | "other3" | "other4";
+  liveBoostCount?: 0 | 1 | 2 | 3;
+  challengeCpCost?: 200 | 400 | 800 | 1600;
   maxSearchDurationMs?: number;
   constraints?: BandoriTeamSearchInput["constraints"];
 };
@@ -238,13 +245,22 @@ export async function createBandoriSearchInput(
     resultLimit: options.resultLimit,
     perfectRate: options.perfectRate,
     useFever: options.useFever,
-    useSpecialRoomBonus: options.useSpecialRoomBonus,
+    // HHWX's current frontend enables the special-room parameter bonus path.
+    useSpecialRoomBonus: options.useSpecialRoomBonus ?? true,
     eventType: inferredEventType,
-    eventFormula: options.eventFormula,
+    // HHWX's current calculator uses the current V3 event-point formula.
+    eventFormula: options.eventFormula ?? 2,
     liveType: normalizedLiveType,
     target: options.target,
     roomPower: options.roomPower,
-    otherPlayersAveragePower: options.otherPlayersAveragePower,
+    // Keep the same current HHWX default for Multi Live room estimates.
+    otherPlayersAveragePower: options.otherPlayersAveragePower
+      ?? (normalizedLiveType === "multi" ? 380_000 : undefined),
+    otherPlayerSkills: options.otherPlayerSkills,
+    encoreSkillSource: options.encoreSkillSource,
+    // 3 boosts / 1600 CP are HHWX's current calculator defaults.
+    liveBoostCount: options.liveBoostCount ?? 3,
+    challengeCpCost: options.challengeCpCost ?? 1600,
     server: profile.profile.server,
     maxSearchDurationMs: options.maxSearchDurationMs,
     constraints: options.constraints,
