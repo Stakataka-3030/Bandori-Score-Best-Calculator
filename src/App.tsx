@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import BestdoriCardThumb from "@/components/BestdoriCardThumb";
 import {
   createBandoriSearchInput,
   loadCurrentGameData,
@@ -90,7 +91,15 @@ function formatProbability(numerator: number, denominator: number): string {
   return `${numerator}/${denominator} · ${percent.toFixed(percent < 1 ? 2 : 1)}%`;
 }
 
-function TeamSlots({ result }: { result: BandoriTeamSearchResult }) {
+function TeamSlots({
+  result,
+  data,
+  server,
+}: {
+  result: BandoriTeamSearchResult;
+  data: GameDataGeneration | null;
+  server: number;
+}) {
   const fallbackIds = result.cards.map((card) => card.cardId);
   const ids = result.teamLayoutCardIds?.length === 5
     ? result.teamLayoutCardIds
@@ -98,21 +107,38 @@ function TeamSlots({ result }: { result: BandoriTeamSearchResult }) {
 
   return (
     <div className="team-slots" aria-label="最优初始队伍站位">
-      {ids.map((cardId, index) => (
-        <div
-          className={`team-slot ${index === 2 ? "team-slot-leader" : ""}`}
-          key={`${cardId}-${index}`}
-        >
-          <span className="slot-position">{index === 2 ? "LEADER" : `SLOT ${index + 1}`}</span>
-          <strong>#{cardId}</strong>
-          {cardId === result.leaderCardId && <span className="leader-chip">队长</span>}
-        </div>
-      ))}
+      {ids.map((cardId, index) => {
+        const resultCard = result.cards.find((card) => card.cardId === cardId);
+        const master = data?.masters.cards[String(cardId)];
+        return (
+          <div
+            className={`team-slot ${index === 2 ? "team-slot-leader" : ""}`}
+            key={`${cardId}-${index}`}
+          >
+            <span className="slot-position">{index === 2 ? "LEADER" : `SLOT ${index + 1}`}</span>
+            <BestdoriCardThumb
+              cardId={cardId}
+              server={server}
+              trained={resultCard?.isTrained ?? false}
+              cardMaster={isRecord(master) ? master : null}
+              leader={cardId === result.leaderCardId}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function SearchResultCard({ result }: { result: BandoriTeamSearchResult }) {
+function SearchResultCard({
+  result,
+  data,
+  server,
+}: {
+  result: BandoriTeamSearchResult;
+  data: GameDataGeneration | null;
+  server: number;
+}) {
   return (
     <article className="search-result-card">
       <div className="result-heading">
@@ -127,7 +153,7 @@ function SearchResultCard({ result }: { result: BandoriTeamSearchResult }) {
         </div>
       </div>
 
-      <TeamSlots result={result} />
+      <TeamSlots result={result} data={data} server={server} />
 
       <div className="metric-grid">
         <div><span>综合力</span><strong>{formatNumber(result.totalPower)}</strong></div>
@@ -461,7 +487,14 @@ export default function App() {
         {!searchResponse && <div className="empty-state">完成档案导入并选择歌曲后，搜索结果会显示在这里。</div>}
         {searchResponse?.results.length === 0 && <div className="empty-state">没有找到满足条件的合法五人队伍。</div>}
         <div className="result-list">
-          {searchResponse?.results.map((result) => <SearchResultCard key={`${result.rank}-${result.leaderCardId}-${result.targetValue}`} result={result} />)}
+          {searchResponse?.results.map((result) => (
+            <SearchResultCard
+              key={`${result.rank}-${result.leaderCardId}-${result.targetValue}`}
+              result={result}
+              data={gameData}
+              server={server}
+            />
+          ))}
         </div>
       </section>
     </main>
