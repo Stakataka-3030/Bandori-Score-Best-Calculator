@@ -59,6 +59,10 @@ function finite(value: unknown): number {
   return Number.isFinite(number) ? Math.max(0, number) : 0;
 }
 
+function zeroParameters(): CharacterParameterSet {
+  return { performance: 0, technique: 0, visual: 0 };
+}
+
 function decodePotentialRecords(value: unknown): Map<number, Partial<CharacterParameterSet>> {
   const source = record(value);
   if (!source || typeof source.ids !== "string" || !Array.isArray(source.performance)
@@ -105,19 +109,65 @@ function decodeHhwxExtension(profile: BestdoriProfile): ImportedCharacterBonus[]
     characterId,
     potential: potentials.get(characterId) ?? {},
     mission: missions.get(characterId) ?? {
-      collection: { performance: 0, technique: 0, visual: 0 },
-      training: { performance: 0, technique: 0, visual: 0 },
+      collection: zeroParameters(),
+      training: zeroParameters(),
     },
   }));
 }
 
+function distributeBestdoriPotentialTotal(totalValue: unknown): {
+  potential: number;
+  training: number;
+  collection: number;
+} {
+  const normalizedTotal = Math.max(0, Math.trunc(finite(totalValue)));
+  // Bestdori uses 1 as the legacy no-bonus sentinel.
+  const effectiveTotal = normalizedTotal <= 1 ? 0 : normalizedTotal;
+  return {
+    potential: Math.min(effectiveTotal, 50),
+    training: Math.min(Math.max(effectiveTotal - 50, 0), 20),
+    collection: Math.min(Math.max(effectiveTotal - 70, 0), 40),
+  };
+}
+
+function decodeBestdoriCompatibilityBonuses(profile: NormalizedBestdoriProfile): ImportedCharacterBonus[] {
+  return profile.potentials.flatMap((total, index) => {
+    const characterId = index + 1;
+    if (characterId <= 0 || characterId > 50) return [];
+    const distributed = distributeBestdoriPotentialTotal(total);
+    if (distributed.potential === 0 && distributed.training === 0 && distributed.collection === 0) {
+      return [];
+    }
+    const potential = {
+      performance: distributed.potential,
+      technique: distributed.potential,
+      visual: distributed.potential,
+    };
+    const collection = {
+      performance: distributed.collection,
+      technique: distributed.collection,
+      visual: distributed.collection,
+    };
+    const training = {
+      performance: distributed.training,
+      technique: distributed.training,
+      visual: distributed.training,
+    };
+    return [{ characterId, potential, mission: { collection, training } }];
+  });
+}
+
 export function importProfileFile(value: unknown): ImportedProfile {
   const raw = parseBestdoriProfile(value);
+  const profile = decodeBestdoriProfile(raw);
   const extension = record(raw.hhwx);
+  const hasHhwxExtension = extension?.format === "hhwx-profile-v1";
   return {
     raw,
-    profile: decodeBestdoriProfile(raw),
-    characterBonuses: decodeHhwxExtension(raw),
-    hasHhwxExtension: extension?.format === "hhwx-profile-v1",
+    profile,
+    characterBonuses: hasHhwxExtension
+      ? decodeHhwxExtension(raw)
+      : decodeBestdoriCompatibilityBonuses(profile),
+    hasHhwxExtension,
   };
 }
