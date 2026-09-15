@@ -1,0 +1,65 @@
+name: Apply Medley real skill shuffle
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/apply-medley-real-skill-shuffle-patch.mjs"
+      - "scripts/patch-medley-reference-shuffle.mjs"
+      - "scripts/patch-medley-fast-upper-shuffle.mjs"
+      - "scripts/patch-medley-upper-rounding.mjs"
+      - "scripts/patch-medley-hydration-shuffle.mjs"
+      - ".github/workflows/apply-medley-real-shuffle.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: medley-real-shuffle-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Apply real-shuffle patches
+        run: |
+          node scripts/apply-medley-real-skill-shuffle-patch.mjs
+          node scripts/patch-medley-reference-shuffle.mjs
+          node scripts/patch-medley-fast-upper-shuffle.mjs
+          node scripts/patch-medley-upper-rounding.mjs
+          node scripts/patch-medley-hydration-shuffle.mjs
+
+      - name: Format Rust
+        run: cargo fmt --all
+
+      - name: Test Medley crates
+        run: |
+          cargo test -p bandori-medley-model
+          cargo test -p bandori-medley-reference
+          cargo test -p bandori-medley-search
+
+      - name: Commit tested patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add crates/bandori-medley-model crates/bandori-medley-reference crates/bandori-medley-search Cargo.toml src-tauri/Cargo.toml
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "Real-shuffle Medley patch already applied."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Apply real skill shuffle to Medley optimizer"
+          git push origin HEAD:main
