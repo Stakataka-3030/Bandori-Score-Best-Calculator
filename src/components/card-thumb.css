@@ -131,6 +131,20 @@
   box-shadow: 0 0 0 2px var(--accent);
 }
 
+/* Compact team-result cards use four separate corners so the badges never stack. */
+.team-slot .card-attribute-badge,
+.team-slot .card-rarity-badge,
+.team-slot .card-master-rank-badge,
+.team-slot .card-skill-level-badge {
+  padding: 3px 4px;
+  font-size: 0.48rem;
+}
+.team-slot .card-attribute-badge { top: 4px; left: 4px; }
+.team-slot .card-rarity-badge { top: 4px; right: 4px; }
+.team-slot .card-skill-level-badge { top: auto; left: 4px; bottom: 4px; }
+.team-slot .card-master-rank-badge { top: auto; right: 4px; bottom: 4px; }
+.team-slot .card-leader-badge { display: none; }
+
 .card-hover-panel {
   position: absolute;
   z-index: 20;
