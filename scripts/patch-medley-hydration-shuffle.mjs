@@ -18,6 +18,14 @@ text = text.replace(
   "const SCORE_ORDER_COUNT: u16 = 120;",
   "const SCORE_ORDER_COUNT: u16 = SKILL_SHUFFLE_PATH_COUNT;",
 );
+text = text.replace(
+  "assert_eq!(team.score_order_count, 120);",
+  "assert_eq!(team.score_order_count, SKILL_SHUFFLE_PATH_COUNT);",
+);
+text = text.replace(
+  "assert!((1..=120).contains(&team.maximum_score_order_count));",
+  "assert!((1..=SKILL_SHUFFLE_PATH_COUNT).contains(&team.maximum_score_order_count));",
+);
 
 await writeFile(path, text, "utf8");
 console.log(`patched ${path}`);
