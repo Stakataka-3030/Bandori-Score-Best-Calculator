@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { BandoriCardAttribute, ResolvedBandoriSkill } from "@/lib/bandori-team-calculator";
 import { normalizeBandoriServer, type BandoriServer } from "@/lib/bandori-server";
 import { normalizeBandoriSkillLabel, type BandoriSkillLabelMaster } from "@/lib/bandori-skill-label";
 import "./card-thumb.css";
+
+const SERVER_CODES = ["jp", "en", "tw", "cn"] as const;
 
 const ATTRIBUTE_LABELS: Record<BandoriCardAttribute, string> = {
   powerful: "红色",
@@ -37,12 +39,10 @@ function regionalText(value: unknown, preferredServer: number): string | null {
 
 function buildThumbUrl(
   cardId: number,
-  server: number,
+  serverCode: string,
   resourceSetName: string,
   type: "normal" | "after_training",
 ): string {
-  // Card artwork always comes from JP assets so unreleased cards/events on other servers still render.
-  const serverCode = "jp";
   const bundleIndex = Math.floor(Math.max(0, Math.trunc(cardId)) / 50)
     .toString()
     .padStart(5, "0");
@@ -91,32 +91,40 @@ export default function BestdoriCardThumb({
   const resourceSetName = typeof cardMaster?.resourceSetName === "string"
     ? cardMaster.resourceSetName
     : null;
-  const cardName = regionalText(cardMaster?.prefix, server) ?? `Card ${cardId}`;
+  const cardName = regionalText(cardMaster?.prefix, server) ?? `卡牌 ${cardId}`;
   const characterName = regionalText(
     characterMaster?.characterName ?? characterMaster?.nickname ?? characterMaster?.firstName,
     server,
-  ) ?? `Character ${String(cardMaster?.characterId ?? "?")}`;
+  ) ?? `角色 ${String(cardMaster?.characterId ?? "?")}`;
   const rawRarity = Number(cardMaster?.rarity);
   const rarity = Number.isFinite(rawRarity) ? Math.max(1, Math.min(5, Math.trunc(rawRarity))) : 0;
   const cardMetaLine = [
     attribute ? ATTRIBUTE_LABELS[attribute] : null,
     rarity > 0 ? `${rarity}★` : null,
     `星光练习 ${masterRank}`,
-    `技能 Lv.${skillLevel}`,
+    `技能等级 ${skillLevel}`,
   ].filter(Boolean).join(" · ");
-  const [imageState, setImageState] = useState<"trained" | "normal" | "failed">(
-    trained ? "trained" : "normal",
-  );
 
-  const src = useMemo(() => {
-    if (!resourceSetName || imageState === "failed") return null;
-    return buildThumbUrl(
-      cardId,
-      server,
-      resourceSetName,
-      imageState === "trained" ? "after_training" : "normal",
-    );
-  }, [cardId, imageState, resourceSetName, server]);
+  const imageCandidates = useMemo(() => {
+    if (!resourceSetName) return [];
+    const preferredServerCode = SERVER_CODES[server as 0 | 1 | 2 | 3] ?? "jp";
+    const serverCodes = preferredServerCode === "jp" ? ["jp"] : ["jp", preferredServerCode];
+    const imageTypes: Array<"normal" | "after_training"> = trained
+      ? ["after_training", "normal"]
+      : ["normal"];
+    return Array.from(new Set(
+      serverCodes.flatMap((serverCode) => imageTypes.map((type) => (
+        buildThumbUrl(cardId, serverCode, resourceSetName, type)
+      ))),
+    ));
+  }, [cardId, resourceSetName, server, trained]);
+  const [imageCandidateIndex, setImageCandidateIndex] = useState(0);
+
+  useEffect(() => {
+    setImageCandidateIndex(0);
+  }, [cardId, resourceSetName, server, trained]);
+
+  const src = imageCandidates[imageCandidateIndex] ?? null;
   const computedSkillLines = useMemo(() => skillSummary(resolvedSkill), [resolvedSkill]);
   const localizedSkillLabel = useMemo(() => {
     const normalizedServer = normalizeBandoriServer(server) ?? 3;
@@ -141,10 +149,7 @@ export default function BestdoriCardThumb({
           alt={cardName}
           loading="lazy"
           decoding="async"
-          onError={() => {
-            if (imageState === "trained") setImageState("normal");
-            else setImageState("failed");
-          }}
+          onError={() => setImageCandidateIndex((index) => index + 1)}
         />
       ) : (
         <div className="card-thumb-placeholder">#{cardId}</div>
@@ -156,9 +161,9 @@ export default function BestdoriCardThumb({
         </span>
       )}
       {rarity > 0 && <span className="card-rarity-badge">{rarity}★</span>}
-      {masterRank > 0 && <span className="card-master-rank-badge">星光 {masterRank}</span>}
-      <span className="card-skill-level-badge">SLv.{Math.max(1, Math.trunc(skillLevel))}</span>
-      {leader && <span className="card-leader-badge">L</span>}
+      {masterRank > 0 && <span className="card-master-rank-badge">星光{masterRank}</span>}
+      <span className="card-skill-level-badge">技能{Math.max(1, Math.trunc(skillLevel))}</span>
+      {leader && <span className="card-leader-badge">队</span>}
 
       <div className="card-thumb-caption">
         <strong>#{cardId}</strong>
