@@ -1,0 +1,41 @@
+name: Apply compact JP-art UI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/apply-compact-jp-ui.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Apply UI changes
+        run: node scripts/apply-compact-jp-ui.mjs
+      - name: Verify skill shuffle
+        run: npm run test:shuffle
+      - name: Build frontend
+        run: npm run build:web
+      - name: Commit tested changes
+        shell: bash
+        run: |
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src
+          git commit -m "Use JP card art and compact result thumbnails"
+          git push
