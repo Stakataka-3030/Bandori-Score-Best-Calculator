@@ -80,7 +80,7 @@ function liveTypeLabel(
   return eventType === "festival" ? "Team Live" : "VS Live";
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isRecord(value: unknown): value is Record<string, any> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -126,7 +126,8 @@ function getAvailableDifficulties(
   if (!data || songId === null) return DIFFICULTIES;
   const song = data.masters.songs[String(songId)];
   if (!isRecord(song) || !isRecord(song.difficulty)) return DIFFICULTIES;
-  const available = DIFFICULTIES.filter((item) => DIFFICULTY_KEYS[item] in song.difficulty!);
+  const difficultyMap = song.difficulty;
+  const available = DIFFICULTIES.filter((item) => DIFFICULTY_KEYS[item] in difficultyMap);
   return available.length > 0 ? available : DIFFICULTIES;
 }
 
