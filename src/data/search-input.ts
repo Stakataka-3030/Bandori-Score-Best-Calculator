@@ -17,6 +17,11 @@ import type {
   BandoriTeamSearchTarget,
   BestdoriSongMaster,
 } from "@/lib/bandori/team-builder/core/types";
+import {
+  applyOwnedCardParameterPreferences,
+  type OwnedCardParameterPreferences,
+  type TemporaryCard,
+} from "@/lib/card-preferences";
 import type { ImportedCharacterBonus, ImportedProfile } from "@/lib/profile-import";
 import { getCachedOrRemoteChart } from "./sync";
 import type { GameDataGeneration } from "./types";
@@ -33,16 +38,45 @@ function finite(value: unknown): number | null {
   return Number.isFinite(numberValue) ? numberValue : null;
 }
 
-function toUserCards(profile: ImportedProfile): BandoriUserCardState[] {
-  return profile.profile.cards.map((card) => ({
+function toUserCards(
+  profile: ImportedProfile,
+  cardsById: Record<string, unknown>,
+  server: number,
+  preferences: OwnedCardParameterPreferences | undefined,
+  temporaryCards: readonly TemporaryCard[],
+): BandoriUserCardState[] {
+  // HHWX treats a temporary copy of a card ID as a replacement for the owned copy,
+  // so the optimizer never sees two instances with the same master card ID by accident.
+  const temporaryCardIds = new Set(temporaryCards.map((card) => card.cardId));
+  const owned = profile.profile.cards
+    .filter((card) => !temporaryCardIds.has(card.cardId))
+    .map((card) => {
+      const master = cardsById[String(card.cardId)] as (BestdoriCardMaster & Record<string, unknown>) | undefined;
+      const effective = applyOwnedCardParameterPreferences(card, master, preferences, server);
+      return {
+        cardId: effective.cardId,
+        cardInstanceKey: `profile:${effective.cardId}`,
+        level: effective.level,
+        masterRank: effective.masterRank,
+        skillLevel: effective.skillLevel,
+        episodeCount: effective.episodeCount,
+        isTrained: effective.isTrained,
+        isExcluded: effective.isExcluded,
+      } satisfies BandoriUserCardState;
+    });
+
+  const temporary = temporaryCards.map((card) => ({
     cardId: card.cardId,
+    cardInstanceKey: `temporary:${card.instanceId}`,
     level: card.level,
     masterRank: card.masterRank,
     skillLevel: card.skillLevel,
     episodeCount: card.episodeCount,
     isTrained: card.isTrained,
-    isExcluded: card.isExcluded,
-  }));
+    isExcluded: false,
+  } satisfies BandoriUserCardState));
+
+  return [...owned, ...temporary];
 }
 
 function toUserAreaItems(profile: ImportedProfile): BandoriUserAreaItemState[] {
@@ -193,6 +227,8 @@ export type CreateBandoriSearchInputOptions = {
   encoreSkillSource?: "self" | "other1" | "other2" | "other3" | "other4";
   liveBoostCount?: 0 | 1 | 2 | 3;
   challengeCpCost?: 200 | 400 | 800 | 1600;
+  ownedCardParameters?: OwnedCardParameterPreferences;
+  temporaryCards?: readonly TemporaryCard[];
   maxSearchDurationMs?: number;
   constraints?: BandoriTeamSearchInput["constraints"];
 };
@@ -230,7 +266,13 @@ export async function createBandoriSearchInput(
     : allowedLiveTypes[0] ?? "free";
 
   return {
-    userCards: toUserCards(profile),
+    userCards: toUserCards(
+      profile,
+      data.masters.cards,
+      profile.profile.server,
+      options.ownedCardParameters,
+      options.temporaryCards ?? [],
+    ),
     userAreaItems: toUserAreaItems(profile),
     characterBonuses: toCharacterBonuses(profile),
     cardsById: data.masters.cards as Record<string, BestdoriCardMaster | undefined>,
