@@ -68,10 +68,11 @@ function openDatabase(): Promise<IDBDatabase> {
 export async function getGenerationState(): Promise<GenerationState> {
   const database = await openDatabase();
   const transaction = database.transaction(META_STORE, "readonly");
+  const done = transactionDone(transaction);
   const record = await requestResult(
     transaction.objectStore(META_STORE).get(GENERATION_STATE_KEY) as IDBRequest<MetaRecord<GenerationState> | undefined>,
   );
-  await transactionDone(transaction);
+  await done;
   return record?.value ?? {
     activeGeneration: null,
     previousGeneration: null,
@@ -83,11 +84,12 @@ export async function setLastCheckedAt(lastCheckedAt: string): Promise<void> {
   const current = await getGenerationState();
   const database = await openDatabase();
   const transaction = database.transaction(META_STORE, "readwrite");
+  const done = transactionDone(transaction);
   transaction.objectStore(META_STORE).put({
     key: GENERATION_STATE_KEY,
     value: { ...current, lastCheckedAt },
   } satisfies MetaRecord<GenerationState>);
-  await transactionDone(transaction);
+  await done;
 }
 
 function masterKey(generation: string, kind: BestdoriMasterKind): string {
@@ -97,6 +99,7 @@ function masterKey(generation: string, kind: BestdoriMasterKind): string {
 async function readGeneration(generation: string): Promise<GameDataGeneration | null> {
   const database = await openDatabase();
   const transaction = database.transaction([META_STORE, MASTER_STORE], "readonly");
+  const done = transactionDone(transaction);
   const mastersStore = transaction.objectStore(MASTER_STORE);
   const records = await Promise.all(BESTDORI_MASTER_KINDS.map((kind) => requestResult(
     mastersStore.get(masterKey(generation, kind)) as IDBRequest<CachedMasterRecord | undefined>,
@@ -104,7 +107,7 @@ async function readGeneration(generation: string): Promise<GameDataGeneration | 
   const manifestRecord = await requestResult(
     transaction.objectStore(META_STORE).get(`manifest:${generation}`) as IDBRequest<MetaRecord<GameDataManifest> | undefined>,
   );
-  await transactionDone(transaction);
+  await done;
 
   if (!manifestRecord?.value || records.some((record) => !record)) {
     return null;
@@ -135,6 +138,7 @@ export async function commitGeneration(generation: GameDataGeneration): Promise<
   const current = await getGenerationState();
   const database = await openDatabase();
   const transaction = database.transaction([META_STORE, MASTER_STORE], "readwrite");
+  const done = transactionDone(transaction);
   const mastersStore = transaction.objectStore(MASTER_STORE);
   const fetchedAt = generation.manifest.fetchedAt;
 
@@ -166,7 +170,7 @@ export async function commitGeneration(generation: GameDataGeneration): Promise<
     },
   } satisfies MetaRecord<GenerationState>);
 
-  await transactionDone(transaction);
+  await done;
   await removeObsoleteGenerations(new Set([
     generation.manifest.generation,
     current.activeGeneration,
@@ -175,45 +179,50 @@ export async function commitGeneration(generation: GameDataGeneration): Promise<
 
 async function removeObsoleteGenerations(keep: Set<string>): Promise<void> {
   const database = await openDatabase();
-  const transaction = database.transaction([META_STORE, MASTER_STORE], "readwrite");
-  const mastersStore = transaction.objectStore(MASTER_STORE);
-  const cursorRequest = mastersStore.openCursor();
 
-  await new Promise<void>((resolve, reject) => {
-    cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error("Unable to clean old game-data generations"));
-    cursorRequest.onsuccess = () => {
-      const cursor = cursorRequest.result;
-      if (!cursor) {
-        resolve();
-        return;
-      }
-      const record = cursor.value as CachedMasterRecord;
-      if (!keep.has(record.generation)) {
-        cursor.delete();
-      }
-      cursor.continue();
-    };
-  });
+  {
+    const transaction = database.transaction(MASTER_STORE, "readwrite");
+    const done = transactionDone(transaction);
+    const cursorRequest = transaction.objectStore(MASTER_STORE).openCursor();
+    await new Promise<void>((resolve, reject) => {
+      cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error("Unable to clean old game-data generations"));
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+        const record = cursor.value as CachedMasterRecord;
+        if (!keep.has(record.generation)) {
+          cursor.delete();
+        }
+        cursor.continue();
+      };
+    });
+    await done;
+  }
 
-  const metaStore = transaction.objectStore(META_STORE);
-  const metaCursorRequest = metaStore.openCursor();
-  await new Promise<void>((resolve, reject) => {
-    metaCursorRequest.onerror = () => reject(metaCursorRequest.error ?? new Error("Unable to clean old manifests"));
-    metaCursorRequest.onsuccess = () => {
-      const cursor = metaCursorRequest.result;
-      if (!cursor) {
-        resolve();
-        return;
-      }
-      const key = String(cursor.key);
-      if (key.startsWith("manifest:") && !keep.has(key.slice("manifest:".length))) {
-        cursor.delete();
-      }
-      cursor.continue();
-    };
-  });
-
-  await transactionDone(transaction);
+  {
+    const transaction = database.transaction(META_STORE, "readwrite");
+    const done = transactionDone(transaction);
+    const cursorRequest = transaction.objectStore(META_STORE).openCursor();
+    await new Promise<void>((resolve, reject) => {
+      cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error("Unable to clean old manifests"));
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+        const key = String(cursor.key);
+        if (key.startsWith("manifest:") && !keep.has(key.slice("manifest:".length))) {
+          cursor.delete();
+        }
+        cursor.continue();
+      };
+    });
+    await done;
+  }
 }
 
 function chartKey(songId: number, difficulty: number): string {
@@ -223,28 +232,31 @@ function chartKey(songId: number, difficulty: number): string {
 export async function readCachedChart(songId: number, difficulty: number): Promise<CachedChartRecord | null> {
   const database = await openDatabase();
   const transaction = database.transaction(CHART_STORE, "readonly");
+  const done = transactionDone(transaction);
   const record = await requestResult(
     transaction.objectStore(CHART_STORE).get(chartKey(songId, difficulty)) as IDBRequest<CachedChartRecord | undefined>,
   );
-  await transactionDone(transaction);
+  await done;
   return record ?? null;
 }
 
 export async function writeCachedChart(record: Omit<CachedChartRecord, "key">): Promise<void> {
   const database = await openDatabase();
   const transaction = database.transaction(CHART_STORE, "readwrite");
+  const done = transactionDone(transaction);
   transaction.objectStore(CHART_STORE).put({
     ...record,
     key: chartKey(record.songId, record.difficulty),
   } satisfies CachedChartRecord);
-  await transactionDone(transaction);
+  await done;
 }
 
 export async function clearGameDataCache(): Promise<void> {
   const database = await openDatabase();
   const transaction = database.transaction([META_STORE, MASTER_STORE, CHART_STORE], "readwrite");
+  const done = transactionDone(transaction);
   transaction.objectStore(META_STORE).clear();
   transaction.objectStore(MASTER_STORE).clear();
   transaction.objectStore(CHART_STORE).clear();
-  await transactionDone(transaction);
+  await done;
 }
