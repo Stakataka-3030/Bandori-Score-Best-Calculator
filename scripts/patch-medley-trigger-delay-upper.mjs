@@ -71,31 +71,22 @@ const newCoverage = `                    let mut coverage = [[0.0; 6]; 3];
                             // Once any earlier member can delay a later trigger, that later
                             // skill may start away from every nominal trigger time. Use the
                             // best duration-sized window anywhere in the chart for all six
-                            // activations. This is deliberately optimistic and therefore a
-                            // safe branch-and-bound upper.
-                            let mut left = 0_usize;
-                            let mut right = 0_usize;
-                            let mut current = 0.0_f64;
+                            // activations. Every candidate window is summed directly with
+                            // upward rounding: subtracting an upward-rounded prefix would not
+                            // itself be a rigorous upper bound.
                             let mut best = 0.0_f64;
-                            while left < song.notes.len() {
-                                if right < left {
-                                    right = left;
-                                    current = 0.0;
-                                }
+                            for start in 0..song.notes.len() {
                                 let end = checked_finite(
-                                    song.notes[left].time_seconds + skill.duration_seconds,
+                                    song.notes[start].time_seconds + skill.duration_seconds,
                                 )?;
-                                while right < song.notes.len()
-                                    && song.notes[right].time_seconds <= end
-                                {
-                                    current = add_up(current, alphas[slot][right])?;
-                                    right += 1;
+                                let mut candidate = 0.0_f64;
+                                for note_index in start..song.notes.len() {
+                                    if song.notes[note_index].time_seconds > end {
+                                        break;
+                                    }
+                                    candidate = add_up(candidate, alphas[slot][note_index])?;
                                 }
-                                best = best.max(current);
-                                if right > left {
-                                    current = sub_up(current, alphas[slot][left])?;
-                                }
-                                left += 1;
+                                best = best.max(candidate);
                             }
                             coverage[slot].fill(best);
                         } else {
