@@ -176,6 +176,7 @@ jobs:
           Highlights:
           - Optimal team search with the real 1024-path / weighted skill-order model.
           - Exact 0.75-second skill trigger guard-window scheduling, including delayed/recursive activations and an expandable timing diagnostic.
+          - Optional “不限时，计算到最优为止” mode: raises the search time limit from 60 seconds to 1800 seconds (30 minutes), while still stopping early once the optimum is proven.
           - Client-side Bestdori game-data synchronization and JP-to-current-server card-art fallback.
           - Bestdori/HHWX profile JSON file import plus direct HHWX JSON import from the system clipboard.
           - Windows x64, macOS Apple Silicon, and Linux x64 desktop packages.
