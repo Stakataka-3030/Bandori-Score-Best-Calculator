@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
+// Keep Medley source import reproducible and limited to public compute-only roots.
 const UPSTREAM_OWNER = "BluewaterAlnilamII";
 const UPSTREAM_REPO = "hhwx";
 const UPSTREAM_REF = "d208e8cc4d4632c4f6d0927ec2244e535a2b29c0";
