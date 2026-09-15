@@ -1,0 +1,59 @@
+name: Apply Medley skill trigger delay
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/patch-medley-trigger-delay-reference.mjs"
+      - "scripts/patch-medley-trigger-delay-exact.mjs"
+      - "scripts/patch-medley-trigger-delay-upper.mjs"
+      - "crates/bandori-medley-model/src/skill_shuffle.rs"
+      - "crates/bandori-medley-model/src/lib.rs"
+      - ".github/workflows/apply-medley-trigger-delay.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: medley-trigger-delay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Apply trigger-delay patches
+        run: |
+          node scripts/patch-medley-trigger-delay-reference.mjs
+          node scripts/patch-medley-trigger-delay-exact.mjs
+          node scripts/patch-medley-trigger-delay-upper.mjs
+      - name: Format Rust
+        run: cargo fmt --all
+      - name: Test Medley crates
+        run: |
+          cargo test -p bandori-medley-model
+          cargo test -p bandori-medley-reference
+          cargo test -p bandori-medley-search
+      - name: Commit tested Rust changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$(git status --porcelain crates/bandori-medley-reference crates/bandori-medley-search)" ]]; then
+            echo "Medley trigger-delay patch already applied."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/bandori-medley-reference crates/bandori-medley-search
+          git commit -m "Model the 0.75s trigger guard in Medley scoring"
+          git pull --rebase origin main
+          git push origin HEAD:main
