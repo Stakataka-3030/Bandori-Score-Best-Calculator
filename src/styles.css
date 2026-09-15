@@ -448,3 +448,31 @@ p { line-height: 1.6; }
   justify-content: flex-end;
   gap: 8px;
 }
+
+.search-budget-option {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 50px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  color: var(--text);
+  background: rgba(248, 248, 252, 0.72);
+  cursor: pointer;
+}
+.search-budget-option input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  flex: 0 0 auto;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.search-budget-option > span { display: grid; gap: 2px; }
+.search-budget-option strong { font-size: 0.82rem; }
+.search-budget-option small { color: var(--muted); font-size: 0.72rem; font-weight: 500; line-height: 1.4; }
+
+@media (prefers-color-scheme: dark) {
+  .search-budget-option { background: #20212d; }
+}

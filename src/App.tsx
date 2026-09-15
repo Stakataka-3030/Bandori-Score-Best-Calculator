@@ -54,6 +54,9 @@ const DIFFICULTY_LABELS: Record<BandoriTeamSearchDifficulty, string> = {
   expert: "Expert",
   special: "Special",
 };
+const DEFAULT_SEARCH_DURATION_MS = 60_000;
+const OPTIMAL_SEARCH_DURATION_MS = 1_800_000;
+
 const EVENT_TYPE_LABELS: Record<BandoriTeamSearchEventType, string> = {
   none: "无活动",
   story: "普通活动",
@@ -149,6 +152,7 @@ export default function App() {
   const [target, setTarget] = useState<BandoriTeamSearchTarget>("score");
   const [perfectRatePercent, setPerfectRatePercent] = useState(100);
   const [resultLimit, setResultLimit] = useState(10);
+  const [searchUntilOptimal, setSearchUntilOptimal] = useState(false);
   const [eventControls, setEventControls] = useState<EventControlState>(() => ({
     ...DEFAULT_EVENT_CONTROL_STATE,
     externalSkills: DEFAULT_EVENT_CONTROL_STATE.externalSkills.map((skill) => ({ ...skill })),
@@ -317,6 +321,7 @@ export default function App() {
     setLastSkillTriggerTimes(null);
     setMedleyInput(null);
     setMedleyResponse(null);
+    const maxSearchDurationMs = searchUntilOptimal ? OPTIMAL_SEARCH_DURATION_MS : DEFAULT_SEARCH_DURATION_MS;
 
     try {
       if (selectedEventType === "medley") {
@@ -341,7 +346,7 @@ export default function App() {
         const startedAt = performance.now();
         const response = await runNativeMedleySearch(input, {
           signal: controller.signal,
-          maxDurationMs: 60_000,
+          maxDurationMs: maxSearchDurationMs,
         });
         if (controller.signal.aborted) return;
         setMedleyResponse(response);
@@ -373,7 +378,7 @@ export default function App() {
         useSpecialRoomBonus: eventControls.useSpecialRoomBonus,
         ownedCardParameters: cardPreferences.ownedCardParameters,
         temporaryCards: cardPreferences.temporaryCards,
-        maxSearchDurationMs: 60_000,
+        maxSearchDurationMs,
       });
       if (controller.signal.aborted) return;
       setLastSkillTriggerTimes(getCachedPreparedChart(input).skillTriggerTimes.slice(0, 6));
@@ -589,6 +594,18 @@ export default function App() {
               <label className="field">
                 <span>结果数量</span>
                 <input type="number" min="1" max="50" step="1" value={resultLimit} disabled={selectedEventType === "medley"} onChange={(event) => setResultLimit(Math.max(1, Math.min(50, Number(event.currentTarget.value))))} />
+              </label>
+
+              <label className="search-budget-option field-wide">
+                <input
+                  type="checkbox"
+                  checked={searchUntilOptimal}
+                  onChange={(event) => setSearchUntilOptimal(event.currentTarget.checked)}
+                />
+                <span>
+                  <strong>不限时，计算到最优为止</strong>
+                  <small>启用后将搜索时间上限从 60 秒提高到 1800 秒（30 分钟）；若提前证明最优则立即结束。</small>
+                </span>
               </label>
             </div>
 
