@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "scripts/apply-compact-jp-ui.mjs"
+      - "scripts/run-compact-jp-ui-fixed.mjs"
   workflow_dispatch:
 
 permissions:
@@ -22,7 +23,7 @@ jobs:
           node-version: 22
       - run: npm install
       - name: Apply UI changes
-        run: node scripts/apply-compact-jp-ui.mjs
+        run: node scripts/run-compact-jp-ui-fixed.mjs
       - name: Verify skill shuffle
         run: npm run test:shuffle
       - name: Build frontend
@@ -30,8 +31,8 @@ jobs:
       - name: Commit tested changes
         shell: bash
         run: |
-          if [[ -z "$(git status --porcelain)" ]]; then
-            echo "No changes to commit"
+          if [[ -z "$(git status --porcelain src)" ]]; then
+            echo "No product changes to commit"
             exit 0
           fi
           git config user.name "github-actions[bot]"
