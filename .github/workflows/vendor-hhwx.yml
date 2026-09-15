@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - scripts/vendor-hhwx.mjs
+      - scripts/apply-real-skill-shuffle.mjs
+      - src/lib/bandori/team-builder/core/skill-shuffle.ts
       - .github/workflows/vendor-hhwx.yml
   workflow_dispatch:
 
@@ -23,14 +25,20 @@ jobs:
           node-version: 22
       - name: Vendor pinned HHWX files
         run: node scripts/vendor-hhwx.mjs
-      - name: Commit vendored baseline
+      - name: Apply local real-shuffle patches
+        run: node scripts/apply-real-skill-shuffle.mjs
+      - name: Install dependencies
+        run: npm install
+      - name: Verify patched baseline
+        run: npm run build
+      - name: Commit vendored and patched baseline
         run: |
           if git diff --quiet; then
-            echo "Vendored files already match pinned HHWX baseline."
+            echo "Vendored files and local patches are already current."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/lib/bandori-area-item-groups.ts src/lib/bandori-team-calculator.ts src/lib/bandori/team-builder/core src/lib/bandori/team-builder/single
-          git commit -m "Vendor pinned HHWX single-song search baseline"
+          git commit -m "Apply real weighted Bandori skill shuffle"
           git push
