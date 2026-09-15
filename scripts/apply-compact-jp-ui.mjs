@@ -261,3 +261,5 @@ patchActivityControls();
 patchApp();
 patchStyles();
 patchParityCss();
+
+// Trigger the tested apply workflow after it exists on main.
