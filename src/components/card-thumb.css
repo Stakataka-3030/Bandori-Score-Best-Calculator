@@ -63,6 +63,7 @@
 }
 
 .card-attribute-badge,
+.card-rarity-badge,
 .card-master-rank-badge,
 .card-skill-level-badge,
 .card-leader-badge {
@@ -88,12 +89,22 @@
 .card-attribute-badge-happy { background: rgba(220, 142, 14, 0.94); }
 .card-attribute-badge-pure { background: rgba(54, 155, 82, 0.92); }
 
-.card-master-rank-badge {
+.card-rarity-badge {
   top: 5px;
   right: 5px;
-  padding: 4px 5px;
+  padding: 4px 6px;
   border-radius: 6px;
-  background: rgba(28, 30, 46, 0.84);
+  color: #2e2500;
+  background: rgba(255, 220, 74, 0.94);
+  border-color: rgba(255, 246, 190, 0.95);
+}
+
+.card-master-rank-badge {
+  top: 29px;
+  right: 5px;
+  padding: 4px 6px;
+  border-radius: 999px;
+  background: rgba(98, 103, 232, 0.93);
 }
 
 .card-skill-level-badge {

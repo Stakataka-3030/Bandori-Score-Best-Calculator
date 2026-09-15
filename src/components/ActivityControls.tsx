@@ -116,7 +116,6 @@ export default function ActivityControls({ data, server, eventType, liveType, st
       <div className="advanced-live-heading">
         <div>
           <strong>活动 / Live 参数</strong>
-          <p className="muted">这里使用 HHWX 同一套活动 Pt 和多人 Live 输入口径。</p>
         </div>
         {eventType !== "none" && <span className="formula-chip">公式 V{state.eventFormula + 1}</span>}
       </div>
@@ -128,7 +127,7 @@ export default function ActivityControls({ data, server, eventType, liveType, st
             <select value={state.eventFormula} onChange={(event) => patch({ eventFormula: Number(event.currentTarget.value) as 0 | 1 | 2 })}>
               <option value={0}>V1</option>
               <option value={1}>V2</option>
-              <option value={2}>V3（HHWX 当前默认）</option>
+              <option value={2}>V3（默认）</option>
             </select>
           </label>
         )}
@@ -196,7 +195,7 @@ export default function ActivityControls({ data, server, eventType, liveType, st
                 checked={state.useSpecialRoomBonus}
                 onChange={(event) => patch({ useSpecialRoomBonus: event.currentTarget.checked })}
               />
-              <span><strong>特殊房间参数加成</strong><small>与 HHWX 当前 Multi Live 输入一致。</small></span>
+              <span><strong>特殊房间参数加成</strong><small>启用多人演出的特殊房间参数加成。</small></span>
             </label>
           </div>
 

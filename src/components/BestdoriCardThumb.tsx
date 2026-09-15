@@ -97,6 +97,14 @@ export default function BestdoriCardThumb({
     characterMaster?.characterName ?? characterMaster?.nickname ?? characterMaster?.firstName,
     server,
   ) ?? `Character ${String(cardMaster?.characterId ?? "?")}`;
+  const rawRarity = Number(cardMaster?.rarity);
+  const rarity = Number.isFinite(rawRarity) ? Math.max(1, Math.min(5, Math.trunc(rawRarity))) : 0;
+  const cardMetaLine = [
+    attribute ? ATTRIBUTE_LABELS[attribute] : null,
+    rarity > 0 ? `${rarity}★` : null,
+    `星光练习 MR ${masterRank}`,
+    `技能 Lv.${skillLevel}`,
+  ].filter(Boolean).join(" · ");
   const [imageState, setImageState] = useState<"trained" | "normal" | "failed">(
     trained ? "trained" : "normal",
   );
@@ -148,7 +156,8 @@ export default function BestdoriCardThumb({
           {ATTRIBUTE_LABELS[attribute]}
         </span>
       )}
-      {masterRank > 0 && <span className="card-master-rank-badge">★{masterRank}</span>}
+      {rarity > 0 && <span className="card-rarity-badge">{rarity}★</span>}
+      {masterRank > 0 && <span className="card-master-rank-badge">MR {masterRank}</span>}
       <span className="card-skill-level-badge">SLv.{Math.max(1, Math.trunc(skillLevel))}</span>
       {leader && <span className="card-leader-badge">L</span>}
 
@@ -160,7 +169,7 @@ export default function BestdoriCardThumb({
       <div className="card-hover-panel" role="tooltip">
         <strong>{cardName}</strong>
         <span>{characterName}</span>
-        {attribute && <span>{ATTRIBUTE_LABELS[attribute]} · 星光练习 {masterRank} · 技能 Lv.{skillLevel}</span>}
+        <span>{cardMetaLine}</span>
         <div className="card-hover-skill">
           {localizedSkillLabel && <strong>{localizedSkillLabel}</strong>}
           {computedSkillLines.length > 0

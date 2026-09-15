@@ -80,6 +80,8 @@ p { line-height: 1.6; }
   gap: 18px;
   align-items: start;
 }
+.workspace-grid-single { grid-template-columns: minmax(0, 1fr); }
+.temporary-card-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .control-stack { display: grid; gap: 14px; }
 .panel, .side-callout, .stats-panel, .search-result-card, .empty-state {
   border: 1px solid var(--border);

@@ -88,7 +88,7 @@ export async function runNativeMedleySearch(
   }
   if (options.signal?.aborted) throw abortError();
 
-  const maxDurationMs = Math.max(1_000, Math.min(3_600_000, Math.trunc(options.maxDurationMs ?? 30_000)));
+  const maxDurationMs = Math.max(1_000, Math.min(3_600_000, Math.trunc(options.maxDurationMs ?? 60_000)));
   const memoryBudgetBytes = Math.max(
     16 * 1024,
     Math.min(2 * 1024 * 1024 * 1024, Math.trunc(options.memoryBudgetBytes ?? DEFAULT_MEMORY_BUDGET_BYTES)),

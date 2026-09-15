@@ -54,21 +54,21 @@ const DIFFICULTY_LABELS: Record<BandoriTeamSearchDifficulty, string> = {
 };
 const EVENT_TYPE_LABELS: Record<BandoriTeamSearchEventType, string> = {
   none: "无活动",
-  story: "通常活动 / Story",
-  challenge: "Challenge Live",
-  versus: "VS Live",
-  live_try: "Live Goals / Live Try",
-  mission_live: "Mission Live",
-  festival: "Team Live Festival",
-  medley: "Medley Live",
+  story: "普通活动",
+  challenge: "挑战活动",
+  versus: "对战活动",
+  live_try: "演出目标活动",
+  mission_live: "任务演出活动",
+  festival: "团队演出祭典",
+  medley: "组曲演出活动",
 };
 
 function liveTypeLabel(liveType: BandoriTeamSearchLiveType, eventType: BandoriTeamSearchEventType): string {
-  if (eventType === "medley") return "Medley Live";
-  if (liveType === "free") return "Free Live";
-  if (liveType === "multi") return "Multi Live";
-  if (liveType === "challenge") return "Challenge Live";
-  return eventType === "festival" ? "Team Live" : "VS Live";
+  if (eventType === "medley") return "组曲演出";
+  if (liveType === "free") return "单人演出";
+  if (liveType === "multi") return "协力演出";
+  if (liveType === "challenge") return "挑战演出";
+  return eventType === "festival" ? "团队演出" : "对战演出";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -317,11 +317,11 @@ export default function App() {
         if (controller.signal.aborted) return;
         setMedleyInput(input);
         setSearchState("searching");
-        setSearchMessage("正在用原生 Rust 搜索三队 Medley 最优解…");
+        setSearchMessage("正在搜索三队 Medley 最优解…");
         const startedAt = performance.now();
         const response = await runNativeMedleySearch(input, {
           signal: controller.signal,
-          maxDurationMs: 30_000,
+          maxDurationMs: 60_000,
         });
         if (controller.signal.aborted) return;
         setMedleyResponse(response);
@@ -353,7 +353,7 @@ export default function App() {
         useSpecialRoomBonus: eventControls.useSpecialRoomBonus,
         ownedCardParameters: cardPreferences.ownedCardParameters,
         temporaryCards: cardPreferences.temporaryCards,
-        maxSearchDurationMs: 30_000,
+        maxSearchDurationMs: 60_000,
       });
       if (controller.signal.aborted) return;
       setSearchState("searching");
@@ -399,12 +399,11 @@ export default function App() {
         <div>
           <p className="eyebrow">Bandori team optimizer</p>
           <h1>Score Best Calculator</h1>
-          <p className="header-copy">HHWX exact-search 基线 + 真实技能洗牌概率。档案只从本地导入，游戏 Master 与谱面由 Tauri 客户端直接同步 Bestdori。</p>
+          <p className="header-copy">根据本地档案与最新游戏数据搜索最优队伍；游戏 Master 与谱面由客户端自动同步。</p>
         </div>
-        <div className="brand-mark">SB</div>
       </header>
 
-      <div className="workspace-grid">
+      <div className={`workspace-grid ${searchResponse ? "" : "workspace-grid-single"}`}>
         <div className="control-stack">
           <section className="panel compact-panel">
             <div className="panel-heading">
@@ -575,10 +574,6 @@ export default function App() {
               onChange={setEventControls}
             />
 
-            {selectedEventType === "medley" && (
-              <p className="status-line">Medley 使用桌面端原生 Rust 三队搜索器：三首歌共享卡池与区域道具，并按真实 1024 RNG 路径优化每队初始五人站位。</p>
-            )}
-
             <div className="search-actions">
               <button type="button" className="primary-button search-button" disabled={!canSearch} onClick={() => void startSearch()}>
                 {searchState === "preparing" ? "准备数据…" : searchState === "searching" ? "搜索中…" : "搜索最优队伍"}
@@ -593,6 +588,7 @@ export default function App() {
           <CardPreferencesPanel
             data={gameData}
             server={server}
+            eventId={eventId}
             preferences={cardPreferences}
             onChange={(next) => {
               setCardPreferences(next);
@@ -603,18 +599,8 @@ export default function App() {
           />
         </div>
 
-        <aside className="side-panel">
-          <div className="side-callout">
-            <span className="section-kicker">MODEL</span>
-            <strong>真实技能洗牌</strong>
-            <p>前 5 次技能由 1024 条等概率 RNG 路径产生 96 个非等概率可达顺序。搜索同时优化队长和初始五人站位。</p>
-          </div>
-          <div className="side-callout">
-            <span className="section-kicker">EVENT PT</span>
-            <strong>HHWX 当前口径</strong>
-            <p>默认 V3、3 火、Challenge 1600 CP；星光练习对应 Bestdori limitBreaks，已进入活动加成计算。</p>
-          </div>
-          {searchResponse && (
+        {searchResponse && (
+          <aside className="side-panel">
             <div className="stats-panel">
               <span className="section-kicker">SEARCH STATS</span>
               <div><span>候选卡</span><strong>{searchResponse.stats.candidateCardCount}</strong></div>
@@ -623,8 +609,8 @@ export default function App() {
               <div><span>剪枝</span><strong>{searchResponse.stats.prunedBranchCount.toLocaleString()}</strong></div>
               <div><span>模式</span><strong>{searchResponse.stats.isExhaustive ? "Exact" : "Bounded"}</strong></div>
             </div>
-          )}
-        </aside>
+          </aside>
+        )}
       </div>
 
       <section className="results-section">
@@ -640,7 +626,7 @@ export default function App() {
 
         {selectedEventType === "medley" ? (
           <>
-            {!medleyResponse && <div className="empty-state">选择 Medley 活动与三首歌曲后，原生 Rust 搜索结果会显示在这里。</div>}
+            {!medleyResponse && <div className="empty-state">选择 Medley 活动与三首歌曲后，三队 Medley 搜索结果会显示在这里。</div>}
             {medleyResponse?.hydration.candidates.length === 0 && <div className="empty-state">没有找到满足条件的三队 Medley 合法解。</div>}
             <div className="result-list">
               {medleyResponse && medleyInput && medleyResponse.hydration.candidates.map((candidate, index) => (

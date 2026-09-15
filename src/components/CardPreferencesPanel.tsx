@@ -14,6 +14,7 @@ import type { GameDataGeneration } from "@/data";
 type Props = {
   data: GameDataGeneration | null;
   server: number;
+  eventId: number | null;
   preferences: TeamBuilderCardPreferences;
   onChange: (next: TeamBuilderCardPreferences) => void;
 };
@@ -38,6 +39,19 @@ function normalizeAttribute(value: unknown): BandoriCardAttribute | undefined {
     : undefined;
 }
 
+function currentEventCardIds(data: GameDataGeneration | null, eventId: number | null): number[] {
+  if (!data || eventId === null) return [];
+  const event = data.masters.events[String(eventId)];
+  if (!isRecord(event) || !Array.isArray(event.members)) return [];
+  const result = new Set<number>();
+  for (const member of event.members) {
+    if (!isRecord(member)) continue;
+    const cardId = Number(member.situationId ?? member.id);
+    if (Number.isSafeInteger(cardId) && cardId > 0) result.add(cardId);
+  }
+  return [...result];
+}
+
 function buildCardOptions(data: GameDataGeneration | null, server: number): SearchableSelectOption[] {
   if (!data) return [];
   return Object.entries(data.masters.cards)
@@ -58,10 +72,11 @@ function buildCardOptions(data: GameDataGeneration | null, server: number): Sear
     .sort((left, right) => right.id - left.id);
 }
 
-export default function CardPreferencesPanel({ data, server, preferences, onChange }: Props) {
+export default function CardPreferencesPanel({ data, server, eventId, preferences, onChange }: Props) {
   const [candidateCardId, setCandidateCardId] = useState<number | null>(null);
   const [notice, setNotice] = useState("");
   const cardOptions = useMemo(() => buildCardOptions(data, server), [data, server]);
+  const eventCardIds = useMemo(() => currentEventCardIds(data, eventId), [data, eventId]);
   const owned = preferences.ownedCardParameters;
 
   function patchOwned(patch: Partial<TeamBuilderCardPreferences["ownedCardParameters"]>) {
@@ -90,6 +105,28 @@ export default function CardPreferencesPanel({ data, server, preferences, onChan
     onChange({ ...preferences, temporaryCards: [...preferences.temporaryCards, card] });
     setCandidateCardId(null);
     setNotice("已按 HHWX 规则以最高可选参数加入临时卡；若档案中已有同 ID 卡，搜索时临时卡会替代它。");
+  }
+
+  function addCurrentEventTemporaryCards() {
+    if (!data || eventId === null || eventCardIds.length === 0) {
+      setNotice("当前活动没有可加入的活动卡。");
+      return;
+    }
+    const existing = new Set(preferences.temporaryCards.map((card) => card.cardId));
+    const additions = eventCardIds.flatMap((cardId) => {
+      if (existing.has(cardId)) return [];
+      const master = data.masters.cards[String(cardId)];
+      const card = createTemporaryCard(cardId, isRecord(master) ? master : undefined, server);
+      if (!card) return [];
+      existing.add(cardId);
+      return [card];
+    });
+    if (additions.length === 0) {
+      setNotice("当期活动卡都已经在临时卡列表中。");
+      return;
+    }
+    onChange({ ...preferences, temporaryCards: [...preferences.temporaryCards, ...additions] });
+    setNotice(`已一键加入 ${additions.length} 张当期活动临时卡。`);
   }
 
   function removeTemporary(instanceId: string) {
@@ -168,11 +205,27 @@ export default function CardPreferencesPanel({ data, server, preferences, onChan
             <strong>临时卡</strong>
             <p className="muted">用于“假如我有这张卡”的最优队伍搜索；新增卡默认按最高可选参数创建。</p>
           </div>
-          {preferences.temporaryCards.length > 0 && (
-            <button type="button" className="ghost-button danger-button" onClick={() => onChange({ ...preferences, temporaryCards: [] })}>
-              全部删除
+          <div className="temporary-card-actions">
+            <button
+              type="button"
+              className="ghost-button"
+              disabled={eventCardIds.length === 0}
+              onClick={addCurrentEventTemporaryCards}
+            >
+              一键添加当期临时卡
             </button>
-          )}
+            <button
+              type="button"
+              className="ghost-button danger-button"
+              disabled={preferences.temporaryCards.length === 0}
+              onClick={() => {
+                onChange({ ...preferences, temporaryCards: [] });
+                setNotice("已移除所有临时卡。");
+              }}
+            >
+              移除所有临时卡
+            </button>
+          </div>
         </div>
 
         <div className="temporary-card-add-row">
