@@ -13,6 +13,8 @@ export const BESTDORI_MASTER_URLS: Record<BestdoriMasterKind, string> = {
   events: `${BESTDORI_BASE_URL}/api/events/all.6.json`,
 };
 
+const BESTDORI_CHART_DIFFICULTIES = ["easy", "normal", "hard", "expert", "special"] as const;
+
 const REQUEST_TIMEOUT_MS = 20_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -124,20 +126,21 @@ export async function fetchBestdoriChart(
   if (!Number.isSafeInteger(songId) || songId <= 0) {
     throw new Error(`Invalid songId: ${songId}`);
   }
-  if (!Number.isSafeInteger(difficulty) || difficulty < 0 || difficulty > 4) {
+  if (!Number.isSafeInteger(difficulty) || difficulty < 0 || difficulty >= BESTDORI_CHART_DIFFICULTIES.length) {
     throw new Error(`Invalid chart difficulty: ${difficulty}`);
   }
 
-  const url = `${BESTDORI_BASE_URL}/api/charts/${songId}/${difficulty}.json`;
+  const difficultyName = BESTDORI_CHART_DIFFICULTIES[difficulty];
+  const url = `${BESTDORI_BASE_URL}/api/charts/${songId}/${difficultyName}.json`;
   const rawText = await fetchText(url);
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawText);
   } catch {
-    throw new Error(`Bestdori chart ${songId}/${difficulty} returned invalid JSON`);
+    throw new Error(`Bestdori chart ${songId}/${difficultyName} returned invalid JSON`);
   }
   if (!Array.isArray(parsed) || parsed.length === 0) {
-    throw new Error(`Bestdori chart ${songId}/${difficulty} is empty or invalid`);
+    throw new Error(`Bestdori chart ${songId}/${difficultyName} is empty or invalid`);
   }
   return {
     url,
