@@ -30,8 +30,15 @@ jobs:
         with:
           node-version: 22
       - run: npm install
-      - name: Apply scheduler-aware scoring patch
-        run: node scripts/apply-skill-trigger-delay-patch.mjs
+      - name: Ensure scheduler-aware scoring patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -q "scheduleBandoriSkillTriggerTimes" src/lib/bandori/team-builder/core/scoring.ts; then
+            echo "Scheduler-aware scoring patch already applied."
+          else
+            node scripts/apply-skill-trigger-delay-patch.mjs
+          fi
       - name: Apply scheduler diagnostics UI patch
         run: node scripts/apply-scheduler-diagnostics-patch.mjs
       - name: Verify skill order distribution
