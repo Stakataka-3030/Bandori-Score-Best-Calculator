@@ -1,0 +1,11 @@
+{
+  "upstream": "BluewaterAlnilamII/hhwx",
+  "ref": "d208e8cc4d4632c4f6d0927ec2244e535a2b29c0",
+  "prefixes": [
+    "src/lib/bandori/medley-foundation/",
+    "crates/bandori-medley-model/",
+    "crates/bandori-medley-search/",
+    "crates/bandori-medley-reference/"
+  ],
+  "fileCount": 47
+}
