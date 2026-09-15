@@ -28,6 +28,12 @@ replaceOne(
   "candidate failure mapping",
 );
 
+// evaluate_candidate now receives prepared songs before the sorted member set.
+text = text.replaceAll(
+  "evaluate_candidate(input, configuration, members, songs)",
+  "evaluate_candidate(input, configuration, songs, members)",
+);
+
 text = text.replaceAll("exact_leader_instance_id", "exact_member_instance_ids");
 text = text.replace(
   "exact_member_instance_ids: Some(row.leader_instance_ids[song_slot]),",
