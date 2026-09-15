@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 
+// Hydration exposes RNG path-weight probabilities, not a count of reachable permutations.
 const path = "crates/bandori-medley-search/src/hydration.rs";
 let text = await readFile(path, "utf8");
 
