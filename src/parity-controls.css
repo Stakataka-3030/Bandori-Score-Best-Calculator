@@ -212,17 +212,19 @@
 }
 
 .skill-order-row {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 7px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
 }
 
 .skill-order-row .skill-order-step {
   display: grid;
-  min-width: 0;
-  max-width: none;
-  gap: 5px;
-  padding: 6px;
+  width: 68px;
+  min-width: 68px;
+  max-width: 68px;
+  gap: 4px;
+  padding: 5px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel-solid);
@@ -236,10 +238,18 @@
   text-align: center;
 }
 
+.skill-order-row .card-thumb { width: 56px; margin-inline: auto; }
+.skill-order-row .card-thumb-caption,
+.skill-order-row .card-attribute-badge,
+.skill-order-row .card-rarity-badge,
+.skill-order-row .card-master-rank-badge,
+.skill-order-row .card-skill-level-badge,
+.skill-order-row .card-leader-badge { display: none; }
+
 .external-skill-chip,
 .card-missing {
   display: grid;
-  min-height: 62px;
+  min-height: 56px;
   place-items: center;
   border-radius: 8px;
   color: var(--muted);
@@ -280,14 +290,12 @@
 
 @media (max-width: 760px) {
   .external-skill-grid { grid-template-columns: 1fr; }
-  .skill-order-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .toggle-row-with-select { grid-template-columns: auto minmax(0, 1fr); }
   .toggle-row-with-select select { grid-column: 2; }
 }
 
 @media (max-width: 520px) {
   .temporary-card-add-row { grid-template-columns: 1fr; }
-  .skill-order-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -297,3 +305,5 @@
     background: rgba(30, 31, 44, 0.78);
   }
 }
+
+.temporary-card-actions { display: flex; flex-wrap: wrap; gap: 7px; justify-content: flex-end; }

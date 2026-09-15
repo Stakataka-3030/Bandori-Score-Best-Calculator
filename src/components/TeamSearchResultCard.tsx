@@ -26,21 +26,27 @@ type Props = {
 
 const EVENT_TYPE_LABELS: Record<BandoriTeamSearchEventType, string> = {
   none: "无活动",
-  story: "通常活动",
-  challenge: "Challenge Live",
-  versus: "VS Live",
-  live_try: "Live Goals",
-  mission_live: "Mission Live",
-  festival: "Team Live Festival",
-  medley: "Medley Live",
+  story: "普通活动",
+  challenge: "挑战活动",
+  versus: "对战活动",
+  live_try: "演出目标活动",
+  mission_live: "任务演出活动",
+  festival: "团队演出祭典",
+  medley: "组曲演出活动",
 };
 
 const ATTRIBUTE_LABELS = {
-  powerful: "Powerful",
-  cool: "Cool",
-  happy: "Happy",
-  pure: "Pure",
+  powerful: "红色",
+  cool: "蓝色",
+  happy: "橙色",
+  pure: "绿色",
 } as const;
+
+const PARAMETER_LABELS: Record<string, string> = {
+  performance: "演出",
+  technique: "技巧",
+  visual: "形象",
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -57,11 +63,11 @@ function regionalText(value: unknown, server: number): string | null {
 }
 
 function liveTypeLabel(liveType: BandoriTeamSearchLiveType, eventType: BandoriTeamSearchEventType): string {
-  if (eventType === "medley") return "Medley Live";
-  if (liveType === "free") return "Free Live";
-  if (liveType === "multi") return "Multi Live";
-  if (liveType === "challenge") return "Challenge Live";
-  return eventType === "festival" ? "Team Live" : "VS Live";
+  if (eventType === "medley") return "组曲演出";
+  if (liveType === "free") return "单人演出";
+  if (liveType === "multi") return "协力演出";
+  if (liveType === "challenge") return "挑战演出";
+  return eventType === "festival" ? "团队演出" : "对战演出";
 }
 
 function formatNumber(value: number | null | undefined): string {
@@ -189,7 +195,7 @@ export default function TeamSearchResultCard({
             className={`team-slot ${index === 2 ? "team-slot-leader" : ""}`}
             key={`${cardId}-${index}`}
           >
-            <span className="slot-position">{index === 2 ? "LEADER" : `SLOT ${index + 1}`}</span>
+            <span className="slot-position">{index === 2 ? "队长" : `位置 ${index + 1}`}</span>
             <CardTile result={result} cardId={cardId} data={data} server={server} leader={index === 2} />
           </div>
         ))}
@@ -204,7 +210,7 @@ export default function TeamSearchResultCard({
               const external = actor && actor !== "self";
               return (
                 <div className="skill-order-step" key={`${index}-${cardId}-${actor ?? "self"}`}>
-                  <span>{index === 5 ? "ENCORE" : `SKILL ${index + 1}`}</span>
+                  <span>{index === 5 ? "返场" : `技能 ${index + 1}`}</span>
                   {external || !cardId ? (
                     <div className="external-skill-chip">{actor?.toUpperCase() ?? "OTHER"}</div>
                   ) : (
@@ -222,7 +228,7 @@ export default function TeamSearchResultCard({
         <div className="area-config-summary">
           <span>乐队：{result.areaItemConfiguration.bandKey ?? "无"}</span>
           <span>属性：{result.areaItemConfiguration.attribute ? ATTRIBUTE_LABELS[result.areaItemConfiguration.attribute] : "无"}</span>
-          <span>参数：{result.areaItemConfiguration.parameter ?? "无"}</span>
+          <span>参数：{result.areaItemConfiguration.parameter ? (PARAMETER_LABELS[result.areaItemConfiguration.parameter] ?? result.areaItemConfiguration.parameter) : "无"}</span>
         </div>
         <div className="area-item-chips">
           {result.areaItemConfiguration.selectedAreaItemIds.length > 0 ? result.areaItemConfiguration.selectedAreaItemIds.map((id) => (
@@ -238,7 +244,11 @@ export default function TeamSearchResultCard({
         <div><span>理论最高</span><strong>{formatNumber(result.maxScore)}</strong></div>
         <div><span>理论最低</span><strong>{formatNumber(result.minScore)}</strong></div>
         <div><span>最高分概率</span><strong>{formatProbability(result.maxScoreOrderCount, result.maxScoreOrderTotal)}</strong></div>
-        {displayedEventPoint !== null && <div><span>活动 Pt</span><strong>{formatNumber(displayedEventPoint)}</strong></div>}
+        {displayedEventPoint !== null && (
+          <div title={`Pt 计算：期望分 ${formatNumber(result.averageScore)} · 活动加成 ${(result.pointBonusRate * 100).toFixed(0)}% · 倍率 ×${result.eventPointMultiplier}`}>
+            <span>活动 Pt</span><strong>{formatNumber(displayedEventPoint)}</strong>
+          </div>
+        )}
         <div><span>活动 / Live</span><strong>{EVENT_TYPE_LABELS[result.eventType]} · {liveTypeLabel(result.liveType, result.eventType)}</strong></div>
         <div><span>队长卡</span><strong>#{result.leaderCardId}</strong></div>
       </div>

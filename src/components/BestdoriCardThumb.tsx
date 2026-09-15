@@ -4,13 +4,11 @@ import { normalizeBandoriServer, type BandoriServer } from "@/lib/bandori-server
 import { normalizeBandoriSkillLabel, type BandoriSkillLabelMaster } from "@/lib/bandori-skill-label";
 import "./card-thumb.css";
 
-const SERVER_CODES = ["jp", "en", "tw", "cn"] as const;
-
 const ATTRIBUTE_LABELS: Record<BandoriCardAttribute, string> = {
-  powerful: "Powerful",
-  cool: "Cool",
-  happy: "Happy",
-  pure: "Pure",
+  powerful: "红色",
+  cool: "蓝色",
+  happy: "橙色",
+  pure: "绿色",
 };
 
 type BestdoriCardThumbProps = {
@@ -43,7 +41,8 @@ function buildThumbUrl(
   resourceSetName: string,
   type: "normal" | "after_training",
 ): string {
-  const serverCode = SERVER_CODES[server as 0 | 1 | 2 | 3] ?? "jp";
+  // Card artwork always comes from JP assets so unreleased cards/events on other servers still render.
+  const serverCode = "jp";
   const bundleIndex = Math.floor(Math.max(0, Math.trunc(cardId)) / 50)
     .toString()
     .padStart(5, "0");
@@ -102,7 +101,7 @@ export default function BestdoriCardThumb({
   const cardMetaLine = [
     attribute ? ATTRIBUTE_LABELS[attribute] : null,
     rarity > 0 ? `${rarity}★` : null,
-    `星光练习 MR ${masterRank}`,
+    `星光练习 ${masterRank}`,
     `技能 Lv.${skillLevel}`,
   ].filter(Boolean).join(" · ");
   const [imageState, setImageState] = useState<"trained" | "normal" | "failed">(
@@ -157,7 +156,7 @@ export default function BestdoriCardThumb({
         </span>
       )}
       {rarity > 0 && <span className="card-rarity-badge">{rarity}★</span>}
-      {masterRank > 0 && <span className="card-master-rank-badge">MR {masterRank}</span>}
+      {masterRank > 0 && <span className="card-master-rank-badge">星光 {masterRank}</span>}
       <span className="card-skill-level-badge">SLv.{Math.max(1, Math.trunc(skillLevel))}</span>
       {leader && <span className="card-leader-badge">L</span>}
 

@@ -155,7 +155,7 @@ export default function CardPreferencesPanel({ data, server, eventId, preference
             checked={owned.maxLevelEpisodeTraining}
             onChange={(event) => patchOwned({ maxLevelEpisodeTraining: event.currentTarget.checked })}
           />
-          <span><strong>等级 / 剧情 / 特训最大化</strong><small>把持有卡提升到该卡可用的最高等级、Episode 数并完成特训。</small></span>
+          <span><strong>等级 / 剧情 / 特训最大化</strong><small>把持有卡提升到该卡可用的最高等级、剧情数并完成特训。</small></span>
         </label>
 
         <label className="toggle-row toggle-row-with-select">
@@ -164,7 +164,7 @@ export default function CardPreferencesPanel({ data, server, eventId, preference
             checked={owned.maxMasterRank}
             onChange={(event) => patchOwned({ maxMasterRank: event.currentTarget.checked })}
           />
-          <span><strong>星光练习最大化</strong><small>仅对指定稀有度阈值内的卡设为 Master Rank 4。</small></span>
+          <span><strong>星光练习最大化</strong><small>仅对指定稀有度阈值内的卡设为星光练习 4。</small></span>
           <select
             value={owned.maxMasterRankRarityThreshold}
             disabled={!owned.maxMasterRank}
@@ -184,7 +184,7 @@ export default function CardPreferencesPanel({ data, server, eventId, preference
             checked={owned.maxSkillLevel}
             onChange={(event) => patchOwned({ maxSkillLevel: event.currentTarget.checked })}
           />
-          <span><strong>技能等级最大化</strong><small>仅对指定稀有度阈值内的卡设为技能 Lv.5。</small></span>
+          <span><strong>技能等级最大化</strong><small>仅对指定稀有度阈值内的卡设为技能等级 5。</small></span>
           <select
             value={owned.maxSkillLevelRarityThreshold}
             disabled={!owned.maxSkillLevel}

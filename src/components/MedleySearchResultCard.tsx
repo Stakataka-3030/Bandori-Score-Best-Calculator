@@ -164,13 +164,13 @@ export default function MedleySearchResultCard({
         const song = input.songs[slot];
         const songMaster = song ? data?.masters.songs[String(song.songId)] : null;
         const songName = song
-          ? regionalText(isRecord(songMaster) ? songMaster.musicTitle ?? songMaster.title : null, server, `Song ${song.songId}`)
-          : `Song ${slot + 1}`;
+          ? regionalText(isRecord(songMaster) ? songMaster.musicTitle ?? songMaster.title : null, server, `歌曲 ${song.songId}`)
+          : `歌曲 ${slot + 1}`;
         return (
           <section className="medley-song-result" key={team.slot}>
             <div className="medley-song-heading">
               <div>
-                <span className="section-kicker">SONG {slot + 1}</span>
+                <span className="section-kicker">第 {slot + 1} 曲</span>
                 <strong>{songName}</strong>
                 {song && <span>{song.difficulty.toUpperCase()} · Lv.{song.playLevel}</span>}
               </div>
@@ -186,7 +186,7 @@ export default function MedleySearchResultCard({
                   className={`team-slot ${index === 2 ? "team-slot-leader" : ""}`}
                   key={`${instanceId}-${index}`}
                 >
-                  <span className="slot-position">{index === 2 ? "LEADER" : `SLOT ${index + 1}`}</span>
+                  <span className="slot-position">{index === 2 ? "队长" : `位置 ${index + 1}`}</span>
                   <MedleyCardTile
                     instanceId={instanceId}
                     input={input}
@@ -205,7 +205,7 @@ export default function MedleySearchResultCard({
               <div className="skill-order-row">
                 {team.bestSkillOrderMemberInstanceIds.map((instanceId, index) => (
                   <div className="skill-order-step" key={`${instanceId}-${index}`}>
-                    <span>{index === 5 ? "ENCORE" : `SKILL ${index + 1}`}</span>
+                    <span>{index === 5 ? "返场" : `技能 ${index + 1}`}</span>
                     <MedleyCardTile
                       instanceId={instanceId}
                       input={input}

@@ -408,7 +408,7 @@ export default function App() {
           <section className="panel compact-panel">
             <div className="panel-heading">
               <div>
-                <span className="section-kicker">DATA</span>
+                <span className="section-kicker">数据</span>
                 <h2>游戏数据</h2>
               </div>
               <button type="button" className="ghost-button" disabled={syncState === "syncing"} onClick={() => void refreshGameData()}>
@@ -418,8 +418,8 @@ export default function App() {
             <p className={`status-line status-${syncState}`}>{syncMessage}</p>
             {gameData && (
               <div className="summary-row">
-                <span>Cards {gameData.manifest.datasets.cards.recordCount}</span>
-                <span>Events {gameData.manifest.datasets.events.recordCount}</span>
+                <span>卡牌 {gameData.manifest.datasets.cards.recordCount}</span>
+                <span>活动 {gameData.manifest.datasets.events.recordCount}</span>
                 <span>{new Date(gameData.manifest.fetchedAt).toLocaleString()}</span>
               </div>
             )}
@@ -428,7 +428,7 @@ export default function App() {
           <section className="panel">
             <div className="panel-heading">
               <div>
-                <span className="section-kicker">PROFILE</span>
+                <span className="section-kicker">档案</span>
                 <h2>玩家档案</h2>
               </div>
               <label className="primary-button file-button">
@@ -446,7 +446,7 @@ export default function App() {
             {profile ? (
               <div className="profile-summary">
                 <strong>{profile.profile.name}</strong>
-                <span>Server {profile.profile.server} · {profile.profile.cards.length} 张持有卡 · {cardPreferences.temporaryCards.length} 张临时卡</span>
+                <span>服务器 {profile.profile.server} · {profile.profile.cards.length} 张持有卡 · {cardPreferences.temporaryCards.length} 张临时卡</span>
                 <span>{profile.hasHhwxExtension ? "HHWX 精确潜能/任务扩展" : "Bestdori 兼容档案"}</span>
               </div>
             ) : (
@@ -458,7 +458,7 @@ export default function App() {
           <section className="panel">
             <div className="panel-heading">
               <div>
-                <span className="section-kicker">SEARCH</span>
+                <span className="section-kicker">搜索</span>
                 <h2>搜索条件</h2>
               </div>
             </div>
@@ -602,12 +602,12 @@ export default function App() {
         {searchResponse && (
           <aside className="side-panel">
             <div className="stats-panel">
-              <span className="section-kicker">SEARCH STATS</span>
+              <span className="section-kicker">搜索统计</span>
               <div><span>候选卡</span><strong>{searchResponse.stats.candidateCardCount}</strong></div>
               <div><span>枚举队伍</span><strong>{searchResponse.stats.enumeratedTeamCount.toLocaleString()}</strong></div>
               <div><span>精评队伍</span><strong>{searchResponse.stats.evaluatedTeamCount.toLocaleString()}</strong></div>
               <div><span>剪枝</span><strong>{searchResponse.stats.prunedBranchCount.toLocaleString()}</strong></div>
-              <div><span>模式</span><strong>{searchResponse.stats.isExhaustive ? "Exact" : "Bounded"}</strong></div>
+              <div><span>模式</span><strong>{searchResponse.stats.isExhaustive ? "已穷尽" : "限时结果"}</strong></div>
             </div>
           </aside>
         )}
@@ -616,12 +616,12 @@ export default function App() {
       <section className="results-section">
         <div className="results-title-row">
           <div>
-            <span className="section-kicker">RESULTS</span>
+            <span className="section-kicker">结果</span>
             <h2>最优队伍</h2>
           </div>
           {selectedEventType === "medley"
-            ? medleyResponse && <span className="result-count">{medleyResponse.hydration.candidates.length} candidates</span>
-            : searchResponse && <span className="result-count">{searchResponse.results.length} results</span>}
+            ? medleyResponse && <span className="result-count">{medleyResponse.hydration.candidates.length} 个候选</span>
+            : searchResponse && <span className="result-count">{searchResponse.results.length} 个结果</span>}
         </div>
 
         {selectedEventType === "medley" ? (

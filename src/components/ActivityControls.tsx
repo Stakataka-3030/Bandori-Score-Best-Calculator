@@ -134,7 +134,7 @@ export default function ActivityControls({ data, server, eventType, liveType, st
 
         {usesLiveBoost && (
           <label className="field">
-            <span>Live Boost / 火罐</span>
+            <span>火罐</span>
             <select value={state.liveBoostCount} onChange={(event) => patch({ liveBoostCount: Number(event.currentTarget.value) as 0 | 1 | 2 | 3 })}>
               <option value={0}>0（×1）</option>
               <option value={1}>1（×5）</option>
@@ -146,7 +146,7 @@ export default function ActivityControls({ data, server, eventType, liveType, st
 
         {isChallengeLive && (
           <label className="field">
-            <span>Challenge CP</span>
+            <span>挑战点数（CP）</span>
             <select value={state.challengeCpCost} onChange={(event) => patch({ challengeCpCost: Number(event.currentTarget.value) as 200 | 400 | 800 | 1600 })}>
               <option value={200}>200 CP（×1）</option>
               <option value={400}>400 CP（×2）</option>
@@ -167,7 +167,7 @@ export default function ActivityControls({ data, server, eventType, liveType, st
 
         {eventType === "festival" && (
           <label className="field">
-            <span>Team Live 结果</span>
+            <span>团队演出结果</span>
             <select value={state.resultFestivalResult} onChange={(event) => patch({ resultFestivalResult: event.currentTarget.value as "win" | "lose" })}>
               <option value="win">胜利</option>
               <option value="lose">失败</option>
@@ -202,7 +202,7 @@ export default function ActivityControls({ data, server, eventType, liveType, st
           <div className="external-skill-grid">
             {state.externalSkills.map((skill, index) => (
               <div className="external-skill-editor" key={index}>
-                <span>OTHER {index + 1}</span>
+                <span>其他玩家 {index + 1}</span>
                 <SearchableSelect
                   value={skill.skillId}
                   options={skillOptions}
@@ -222,13 +222,13 @@ export default function ActivityControls({ data, server, eventType, liveType, st
           </div>
 
           <label className="field encore-source-field">
-            <span>第 6 次 Encore 技能来源</span>
+            <span>第 6 次返场技能来源</span>
             <select value={state.encoreSkillSource} onChange={(event) => patch({ encoreSkillSource: event.currentTarget.value as EventControlState["encoreSkillSource"] })}>
               <option value="self">自己队长</option>
-              <option value="other1">OTHER 1</option>
-              <option value="other2">OTHER 2</option>
-              <option value="other3">OTHER 3</option>
-              <option value="other4">OTHER 4</option>
+              <option value="other1">其他玩家 1</option>
+              <option value="other2">其他玩家 2</option>
+              <option value="other3">其他玩家 3</option>
+              <option value="other4">其他玩家 4</option>
             </select>
           </label>
         </div>

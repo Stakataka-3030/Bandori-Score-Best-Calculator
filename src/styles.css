@@ -222,22 +222,27 @@ p { line-height: 1.6; }
 .result-target strong { font-size: 0.94rem; }
 
 .team-slots {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-  margin: 15px 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 12px 0;
 }
 .team-slot {
   position: relative;
   display: grid;
-  min-height: 84px;
-  align-content: center;
+  width: 90px;
+  min-height: 0;
+  align-content: start;
   justify-items: center;
-  gap: 5px;
+  gap: 4px;
+  padding: 5px;
   border: 1px solid var(--border);
-  border-radius: 13px;
+  border-radius: 11px;
   background: #fafaff;
 }
+.team-slot .card-thumb { width: 76px; }
+.team-slot .card-thumb-caption { display: none; }
 .team-slot-leader { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px rgba(98, 103, 232, 0.08); }
 .slot-position { color: var(--muted); font-size: 0.59rem; font-weight: 780; letter-spacing: 0.08em; }
 .team-slot strong { font-size: 1rem; }
@@ -313,7 +318,8 @@ p { line-height: 1.6; }
   .field-wide { grid-column: auto; }
   .side-panel { grid-template-columns: 1fr; }
   .team-slots { gap: 5px; }
-  .team-slot { min-height: 72px; border-radius: 10px; }
+  .team-slot { width: 82px; border-radius: 10px; }
+  .team-slot .card-thumb { width: 68px; }
   .team-slot strong { font-size: 0.82rem; }
   .slot-position { font-size: 0.5rem; }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
