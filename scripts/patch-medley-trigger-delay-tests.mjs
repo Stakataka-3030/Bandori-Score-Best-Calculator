@@ -8,8 +8,15 @@ function removeTest(name) {
   const start = source.indexOf(needle);
   if (start < 0) throw new Error(`missing old test ${name}`);
   const next = source.indexOf("\n    #[test]\n", start + needle.length);
-  if (next < 0) throw new Error(`cannot find end of old test ${name}`);
-  source = source.slice(0, start) + source.slice(next + 1);
+  if (next >= 0) {
+    source = source.slice(0, start) + source.slice(next + 1);
+    return;
+  }
+  // The final test in the module has no following #[test]; preserve only the
+  // module's closing brace.
+  const moduleClose = source.lastIndexOf("\n}");
+  if (moduleClose <= start) throw new Error(`cannot find module end after old test ${name}`);
+  source = source.slice(0, start) + source.slice(moduleClose);
 }
 
 removeTest("overlapping_windows_add_independently_rounded_extras");
