@@ -6,11 +6,16 @@
 #![forbid(unsafe_code)]
 
 mod input;
+mod skill_shuffle;
 mod validation;
 
 pub use input::{
     CardScoringInputV1, DifficultyV1, ExactProbabilityV1, FixedMedleyEvaluationInputV1,
     FixedTeamV1, MedleySongV1, ResolvedScoreSkillV1, ScoringNoteV1, SkillBehaviorV1,
+};
+pub use skill_shuffle::{
+    SKILL_SHUFFLE_PATH_COUNT, SKILL_SHUFFLE_REACHABLE_ORDER_COUNT, SKILL_SHUFFLE_SIZE,
+    SKILL_SLOT_TRIGGER_WEIGHTS, WeightedSkillOrder, weighted_skill_orders,
 };
 pub use validation::{ValidationCode, ValidationError};
 
