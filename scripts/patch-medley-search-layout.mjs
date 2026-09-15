@@ -36,6 +36,10 @@ text = text.replaceAll(
 
 text = text.replaceAll("exact_leader_instance_id", "exact_member_instance_ids");
 text = text.replace(
+  "exact_member_instance_ids: Option<u32>,",
+  "exact_member_instance_ids: Option<[u32; 5]>,",
+);
+text = text.replace(
   "exact_member_instance_ids: Some(row.leader_instance_ids[song_slot]),",
   "exact_member_instance_ids: Some(row.song_member_instance_ids[song_slot]),",
 );
