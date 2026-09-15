@@ -1,9 +1,8 @@
 /*
- * Portable score engine derived from HHWX core/scoring.ts.
+ * Chart score calculation shared by single-song and medley team search.
  *
- * The score model is intentionally kept independent from team enumeration. A caller supplies
- * a prepared chart, band power and already-resolved skills. Five normal trigger windows are
- * followed by the sixth encore/leader window when the chart provides it.
+ * This module owns note-level score math, skill-window optimization, combo carryover, and
+ * skill-rate upper estimates. It does not choose teams; callers provide the card set and order.
  */
 import type {
   BandoriJudge,
@@ -14,32 +13,31 @@ import type {
 import { JUDGE_PERCENT, JUDGE_RANK } from "./constants";
 import { getScoreComboMultiplier } from "./chart";
 import { buildPermutations, clamp, getRegionalNumber } from "./utils";
-import type {
-  BandoriTeamSearchInput,
-  BandoriTeamSearchSkillOrderActor,
-  PreparedChart,
-  ScoreCalculationCache,
-  ScoreComboOptions,
-  SearchCard,
-  SkillUpperRates,
-} from "./types";
+import type { BandoriTeamSearchInput, BandoriTeamSearchSkillOrderActor, PreparedChart, ScoreCalculationCache, ScoreComboOptions, SearchCard, SkillUpperRates } from "./types";
 
 const SKILL_ORDER_PERMUTATIONS = buildPermutations([0, 1, 2, 3, 4]);
-
 function getSkillEndNote(chart: PreparedChart, slotIndex: number, durationSeconds: number): number {
   const triggerTime = chart.skillTriggerTimes[slotIndex];
-  if (triggerTime === undefined) return chart.notesCount;
+  if (triggerTime === undefined) {
+    return chart.notesCount;
+  }
+
   const endTime = triggerTime + durationSeconds + 0.00001;
   let low = 0;
   let high = chart.notesCount;
   while (low < high) {
     const middle = Math.floor((low + high) / 2);
-    if ((chart.notes[middle]?.time ?? 0) > endTime) high = middle;
-    else low = middle + 1;
+    if ((chart.notes[middle]?.time ?? 0) > endTime) {
+      high = middle;
+    } else {
+      low = middle + 1;
+    }
   }
   return low;
 }
 
+// This perfectRate path is an expected-score model: all non-PERFECT notes are treated as GREAT.
+// Paths that need an explicit judgment sequence use judgeList instead of this expected multiplier.
 function conditionMatches(effect: ResolvedBandoriScoreSkillEffect, judge: BandoriJudge): boolean {
   return effect.condition === "none" || JUDGE_RANK[judge] <= JUDGE_RANK[effect.condition];
 }
@@ -49,25 +47,42 @@ function isGoodOrWorseJudge(judge: BandoriJudge): boolean {
 }
 
 function getExpectedJudgePercent(perfectRate: number): number {
-  const p = clamp(perfectRate, 0, 1);
-  return JUDGE_PERCENT.perfect * p + JUDGE_PERCENT.great * (1 - p);
+  const normalizedPerfectRate = clamp(perfectRate, 0, 1);
+  return JUDGE_PERCENT.perfect * normalizedPerfectRate + JUDGE_PERCENT.great * (1 - normalizedPerfectRate);
 }
 
+// The current accuracy model treats non-PERFECT notes as GREAT, so GREAT-or-worse breaks do not trigger on the expected-score path.
 function getEffectMultiplier(
   effect: ResolvedBandoriScoreSkillEffect,
   judge: BandoriJudge,
   continuedActive: boolean,
   rateUpBonusPercent: number,
 ): { multiplier: number; continuedActive: boolean } {
-  if (effect.type === "score_rate_up_with_perfect") return { multiplier: 1, continuedActive };
+  if (effect.type === "score_rate_up_with_perfect") {
+    return { multiplier: 1, continuedActive };
+  }
+
   if (effect.type === "score_continued_note_judge") {
-    const next = continuedActive && !isGoodOrWorseJudge(judge);
-    return { multiplier: next ? 1 + (effect.valuePercent + rateUpBonusPercent) / 100 : 1, continuedActive: next };
+    const nextContinuedActive = continuedActive && !isGoodOrWorseJudge(judge);
+    return {
+      multiplier: nextContinuedActive ? 1 + (effect.valuePercent + rateUpBonusPercent) / 100 : 1,
+      continuedActive: nextContinuedActive,
+    };
   }
+
   if (effect.type === "score_under_great_half") {
-    if (conditionMatches(effect, judge)) return { multiplier: 1 + (effect.valuePercent + rateUpBonusPercent) / 100, continuedActive };
-    return { multiplier: isGoodOrWorseJudge(judge) ? 0.5 : 1, continuedActive };
+    if (conditionMatches(effect, judge)) {
+      return {
+        multiplier: 1 + (effect.valuePercent + rateUpBonusPercent) / 100,
+        continuedActive,
+      };
+    }
+    return {
+      multiplier: isGoodOrWorseJudge(judge) ? 0.5 : 1,
+      continuedActive,
+    };
   }
+
   if (effect.type === "score_only_perfect") {
     return {
       multiplier: judge === "perfect" && conditionMatches(effect, judge)
@@ -76,27 +91,43 @@ function getEffectMultiplier(
       continuedActive,
     };
   }
-  return {
-    multiplier: conditionMatches(effect, judge) ? 1 + (effect.valuePercent + rateUpBonusPercent) / 100 : 1,
-    continuedActive,
-  };
+
+  if (conditionMatches(effect, judge)) {
+    return {
+      multiplier: 1 + (effect.valuePercent + rateUpBonusPercent) / 100,
+      continuedActive,
+    };
+  }
+
+  return { multiplier: 1, continuedActive };
 }
 
 function hasContinuedJudgeEffect(skill: ResolvedBandoriSkill): boolean {
   return skill.scoreEffects.some((effect) => effect.type === "score_continued_note_judge");
 }
 
-function getExpectedSkillMultiplier(skill: ResolvedBandoriSkill, perfectRate: number, activeNoteCount: number): number {
-  const p = clamp(perfectRate, 0, 1);
-  const expectedJudgePercent = getExpectedJudgePercent(p);
+function getExpectedSkillMultiplier(
+  skill: ResolvedBandoriSkill,
+  perfectRate: number,
+  activeNoteCount: number,
+): number {
+  const normalizedPerfectRate = clamp(perfectRate, 0, 1);
+  const expectedJudgePercent = getExpectedJudgePercent(normalizedPerfectRate);
   let continuedMultiplier = 0;
   let perfectBonus = 0;
   let greatBonus = 0;
   let scoringEffectApplied = false;
+
   for (const effect of skill.scoreEffects) {
-    if (effect.type === "score_rate_up_with_perfect") continue;
-    const rateUpBonusPercent = skill.hasRateUpWithPerfect ? 0.5 * Math.min(activeNoteCount, 100) * p : 0;
+    if (effect.type === "score_rate_up_with_perfect") {
+      continue;
+    }
+
+    const rateUpBonusPercent = skill.hasRateUpWithPerfect
+      ? 0.5 * Math.min(activeNoteCount, 100) * normalizedPerfectRate
+      : 0;
     const valueBonus = (effect.valuePercent + rateUpBonusPercent) / 100;
+
     if (effect.type === "score_continued_note_judge") {
       continuedMultiplier = 1 + valueBonus;
       scoringEffectApplied = true;
@@ -105,23 +136,60 @@ function getExpectedSkillMultiplier(skill: ResolvedBandoriSkill, perfectRate: nu
       greatBonus = -0.5;
       scoringEffectApplied = true;
     } else if (effect.type === "score_only_perfect" || effect.condition === "perfect") {
-      if (perfectBonus === 0) perfectBonus = valueBonus;
+      if (perfectBonus === 0) {
+        perfectBonus = valueBonus;
+      }
       scoringEffectApplied = true;
     } else {
-      if (perfectBonus === 0) perfectBonus = valueBonus;
-      if (greatBonus === 0) greatBonus = valueBonus;
+      if (perfectBonus === 0) {
+        perfectBonus = valueBonus;
+      }
+      if (greatBonus === 0) {
+        greatBonus = valueBonus;
+      }
       scoringEffectApplied = true;
     }
   }
-  if (!scoringEffectApplied) return 1;
+
+  if (!scoringEffectApplied) {
+    return 1;
+  }
+
   const perfectMultiplier = 1 + perfectBonus;
   const greatMultiplier = 1 + greatBonus;
-  if (continuedMultiplier > 0) return greatMultiplier + (p ** activeNoteCount) * (continuedMultiplier - greatMultiplier);
-  if (perfectMultiplier === greatMultiplier) return perfectMultiplier;
+  if (continuedMultiplier > 0) {
+    return greatMultiplier
+      + (normalizedPerfectRate ** activeNoteCount) * (continuedMultiplier - greatMultiplier);
+  }
+  if (perfectMultiplier === greatMultiplier) {
+    return perfectMultiplier;
+  }
   return (
-    JUDGE_PERCENT.perfect * perfectMultiplier * p
-    + JUDGE_PERCENT.great * greatMultiplier * (1 - p)
+    JUDGE_PERCENT.perfect * perfectMultiplier * normalizedPerfectRate
+    + JUDGE_PERCENT.great * greatMultiplier * (1 - normalizedPerfectRate)
   ) / expectedJudgePercent;
+}
+
+function buildSkillMultiplierList(
+  chart: PreparedChart,
+  skill: ResolvedBandoriSkill | null,
+  slotIndex: number,
+  perfectRate: number,
+): Float64Array {
+  const result = new Float64Array(chart.notesCount);
+  result.fill(1);
+  if (!skill || skill.scoreEffects.length === 0) {
+    return result;
+  }
+
+  const start = chart.skillStartNotes[slotIndex] ?? chart.notesCount;
+  const end = getSkillEndNote(chart, slotIndex, skill.durationSeconds);
+
+  for (let noteIndex = start; noteIndex < end; noteIndex += 1) {
+    result[noteIndex] = getExpectedSkillMultiplier(skill, perfectRate, noteIndex - start + 1);
+  }
+
+  return result;
 }
 
 function getSkillMultiplierForJudge(skill: ResolvedBandoriSkill, judge: BandoriJudge): number {
@@ -135,68 +203,284 @@ function getSkillMultiplierForJudge(skill: ResolvedBandoriSkill, judge: BandoriJ
   return Math.max(0, multiplier);
 }
 
-function getConstantSkillMultiplier(skill: ResolvedBandoriSkill, perfectRate: number): number {
-  if (skill.hasRateUpWithPerfect) return Number.NaN;
+// Some skill effects collapse to a constant multiplier for a given accuracy, avoiding per-note multiplier arrays.
+function getGeneratedJudgeConstantSkillMultiplier(
+  skill: ResolvedBandoriSkill,
+  perfectRate: number,
+): number {
+  if (skill.hasRateUpWithPerfect) {
+    return Number.NaN;
+  }
+
   const perfectMultiplier = getSkillMultiplierForJudge(skill, "perfect");
-  if (perfectRate === 1) return perfectMultiplier;
-  if (hasContinuedJudgeEffect(skill)) return Number.NaN;
+  if (perfectRate === 1) {
+    return perfectMultiplier;
+  }
+
+  if (hasContinuedJudgeEffect(skill)) {
+    return Number.NaN;
+  }
+
   return getExpectedSkillMultiplier(skill, perfectRate, 1);
 }
 
-function buildBaseNoteScores(
+function getCachedSkillMultiplierList(
+  chart: PreparedChart,
+  skill: ResolvedBandoriSkill | null,
+  slotIndex: number,
+  perfectRate: number,
+  cache?: ScoreCalculationCache,
+): Float64Array {
+  if (!cache || !skill) {
+    return buildSkillMultiplierList(chart, skill, slotIndex, perfectRate);
+  }
+
+  const key = `${perfectRate}:${slotIndex}:${skill.cacheKey}`;
+  const cached = cache.skillMultiplierLists.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const multipliers = buildSkillMultiplierList(chart, skill, slotIndex, perfectRate);
+  cache.skillMultiplierLists.set(key, multipliers);
+  return multipliers;
+}
+
+function buildJudgeList(notesCount: number, perfectRate: number): BandoriJudge[] {
+  const normalizedPerfectRate = clamp(perfectRate, 0, 1);
+  const perfectCount = Math.round(notesCount * normalizedPerfectRate);
+  return Array.from({ length: notesCount }, (_, index) => (index < perfectCount ? "perfect" : "great"));
+}
+
+function getCachedJudgeList(
+  notesCount: number,
+  perfectRate: number,
+  cache?: ScoreCalculationCache,
+): BandoriJudge[] {
+  if (!cache?.judgeLists) {
+    return buildJudgeList(notesCount, perfectRate);
+  }
+  const key = `${notesCount}:${perfectRate}`;
+  const cached = cache.judgeLists.get(key);
+  if (cached) {
+    return cached;
+  }
+  const judgeList = buildJudgeList(notesCount, perfectRate);
+  cache.judgeLists.set(key, judgeList);
+  return judgeList;
+}
+
+type InnerScoreResult = {
+  scores: Int32Array;
+  total: number;
+};
+
+function getCachedInnerScoreRates(
+  chart: PreparedChart,
+  judgeList: readonly BandoriJudge[],
+  perfectRate: number,
+  comboOptions: ScoreComboOptions | undefined,
+  cache?: ScoreCalculationCache,
+): Float64Array {
+  const cacheKey = [
+    chart.notesCount,
+    chart.playLevel,
+    perfectRate,
+    comboOptions?.startCombo ?? 0,
+    comboOptions?.useMedleyCombo ? 1 : 0,
+  ].join(":");
+  const cached = cache?.innerScoreRates?.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const rates = new Float64Array(chart.notesCount);
+  const baseScorePerPower = 3 * (1 + (chart.playLevel - 5) / 100) / chart.notesCount;
+  const judgePercent = getExpectedJudgePercent(perfectRate);
+  for (let noteIndex = 0; noteIndex < chart.notesCount; noteIndex += 1) {
+    const note = chart.notes[noteIndex];
+    rates[noteIndex] = baseScorePerPower
+      * judgePercent
+      * getScoreComboMultiplier(noteIndex, comboOptions)
+      * (note.fever ? 2 : 1);
+  }
+  cache?.innerScoreRates?.set(cacheKey, rates);
+  return rates;
+}
+
+function buildInnerScoreResult(
+  chart: PreparedChart,
+  bandPower: number,
+  judgeList: readonly BandoriJudge[],
+  perfectRate: number,
+  comboOptions?: ScoreComboOptions,
+  cache?: ScoreCalculationCache,
+): InnerScoreResult {
+  const scores = new Int32Array(chart.notesCount);
+  if (chart.notesCount === 0 || bandPower <= 0) {
+    return { scores, total: 0 };
+  }
+
+  const innerScoreRates = getCachedInnerScoreRates(chart, judgeList, perfectRate, comboOptions, cache);
+  let total = 0;
+  for (let noteIndex = 0; noteIndex < chart.notesCount; noteIndex += 1) {
+    const score = Math.floor(bandPower * innerScoreRates[noteIndex]);
+    scores[noteIndex] = score;
+    total += score;
+  }
+  return { scores, total };
+}
+
+// Computes note scores before skills. Complex skill paths reuse each note's inner score to calculate window deltas.
+function calculateBaseScoreFromRates(bandPower: number, innerScoreRates: Float64Array): number {
+  let total = 0;
+  for (let noteIndex = 0; noteIndex < innerScoreRates.length; noteIndex += 1) {
+    total += Math.floor(bandPower * innerScoreRates[noteIndex]);
+  }
+  return total;
+}
+
+function getCachedBaseScoreFromRates(
   chart: PreparedChart,
   bandPower: number,
   perfectRate: number,
-  comboOptions?: ScoreComboOptions,
-): Int32Array {
-  const scores = new Int32Array(chart.notesCount);
-  if (chart.notesCount === 0 || bandPower <= 0) return scores;
-  const baseScorePerPower = 3 * (1 + (chart.playLevel - 5) / 100) / chart.notesCount;
-  const judgePercent = getExpectedJudgePercent(perfectRate);
-  for (let i = 0; i < chart.notesCount; i += 1) {
-    const note = chart.notes[i];
-    scores[i] = Math.floor(
-      bandPower * baseScorePerPower * judgePercent * getScoreComboMultiplier(i, comboOptions) * (note.fever ? 2 : 1),
-    );
-  }
-  return scores;
-}
-
-function sumInt32(values: Int32Array): number {
-  let sum = 0;
-  for (const value of values) sum += value;
-  return sum;
-}
-
-function getSkillWindowContribution(
-  chart: PreparedChart,
-  skill: ResolvedBandoriSkill | null | undefined,
-  slotIndex: number,
-  baseNoteScores: Int32Array,
-  perfectRate: number,
+  comboOptions: ScoreComboOptions | undefined,
+  innerScoreRates: Float64Array,
+  cache: ScoreCalculationCache | undefined,
 ): number {
-  if (!skill || skill.scoreEffects.length === 0) return 0;
+  if (!cache?.baseScoresByChart) {
+    return calculateBaseScoreFromRates(bandPower, innerScoreRates);
+  }
+  let chartCache = cache.baseScoresByChart.get(chart);
+  if (!chartCache) {
+    chartCache = new Map();
+    cache.baseScoresByChart.set(chart, chartCache);
+  }
+  const cacheKey = [
+    bandPower,
+    perfectRate,
+    comboOptions?.startCombo ?? 0,
+    comboOptions?.useMedleyCombo ? 1 : 0,
+  ].join(":");
+  const cached = chartCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const score = calculateBaseScoreFromRates(bandPower, innerScoreRates);
+  chartCache.set(cacheKey, score);
+  return score;
+}
+
+function calculateConstantWindowContributionsFromRates(
+  chart: PreparedChart,
+  skill: ResolvedBandoriSkill,
+  constantMultiplier: number,
+  bandPower: number,
+  innerScoreRates: Float64Array,
+  cache: Map<string, Int32Array>,
+): Int32Array {
+  const cacheKey = `${constantMultiplier}:${skill.durationSeconds}`;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const windowContributions = new Int32Array(6);
+  for (let slotIndex = 0; slotIndex < 6; slotIndex += 1) {
+    const start = chart.skillStartNotes[slotIndex] ?? chart.notesCount;
+    const end = getSkillEndNote(chart, slotIndex, skill.durationSeconds);
+    let contribution = 0;
+    for (let noteIndex = start; noteIndex < end; noteIndex += 1) {
+      const innerScore = Math.floor(bandPower * innerScoreRates[noteIndex]);
+      contribution += Math.floor(innerScore * constantMultiplier) - innerScore;
+    }
+    windowContributions[slotIndex] = contribution;
+  }
+  cache.set(cacheKey, windowContributions);
+  return windowContributions;
+}
+
+function calculateSkillExtraContribution(
+  chart: PreparedChart,
+  skill: ResolvedBandoriSkill | null,
+  slotIndex: number,
+  judgeList: readonly BandoriJudge[],
+  innerScores: Int32Array,
+  perfectRate: number,
+  cache?: ScoreCalculationCache,
+  constantWindowContributionCache?: Map<string, Int32Array>,
+): number {
+  if (!skill || skill.scoreEffects.length === 0) {
+    return 0;
+  }
+
+  let contribution = 0;
   const start = chart.skillStartNotes[slotIndex] ?? chart.notesCount;
   const end = getSkillEndNote(chart, slotIndex, skill.durationSeconds);
-  const constantMultiplier = getConstantSkillMultiplier(skill, perfectRate);
-  let contribution = 0;
+  const constantMultiplier = getGeneratedJudgeConstantSkillMultiplier(skill, perfectRate);
+  if (Number.isFinite(constantMultiplier)) {
+    if (constantWindowContributionCache) {
+      const cacheKey = `${constantMultiplier}:${skill.durationSeconds}`;
+      let windowContributions = constantWindowContributionCache.get(cacheKey);
+      if (!windowContributions) {
+        windowContributions = new Int32Array(6);
+        for (let cachedSlotIndex = 0; cachedSlotIndex < 6; cachedSlotIndex += 1) {
+          const cachedStart = chart.skillStartNotes[cachedSlotIndex] ?? chart.notesCount;
+          const cachedEnd = getSkillEndNote(chart, cachedSlotIndex, skill.durationSeconds);
+          let windowContribution = 0;
+          for (let noteIndex = cachedStart; noteIndex < cachedEnd; noteIndex += 1) {
+            windowContribution += Math.floor(innerScores[noteIndex] * constantMultiplier) - innerScores[noteIndex];
+          }
+          windowContributions[cachedSlotIndex] = windowContribution;
+        }
+        constantWindowContributionCache.set(cacheKey, windowContributions);
+      }
+      return windowContributions[slotIndex] ?? 0;
+    }
+    for (let noteIndex = start; noteIndex < end; noteIndex += 1) {
+      contribution += Math.floor(innerScores[noteIndex] * constantMultiplier) - innerScores[noteIndex];
+    }
+    return contribution;
+  }
+
+  const multipliers = getCachedSkillMultiplierList(chart, skill, slotIndex, perfectRate, cache);
   for (let noteIndex = start; noteIndex < end; noteIndex += 1) {
-    const activeNoteCount = noteIndex - start + 1;
-    const multiplier = Number.isFinite(constantMultiplier)
-      ? constantMultiplier
-      : getExpectedSkillMultiplier(skill, perfectRate, activeNoteCount);
-    contribution += Math.floor(baseNoteScores[noteIndex] * Math.max(0, multiplier)) - baseNoteScores[noteIndex];
+    contribution += Math.floor(innerScores[noteIndex] * Math.max(0, multipliers[noteIndex])) - innerScores[noteIndex];
   }
   return contribution;
 }
 
-function getContributions(
+function getCachedSkillWindowContributions(
   chart: PreparedChart,
-  skill: ResolvedBandoriSkill | null | undefined,
-  baseNoteScores: Int32Array,
+  bandPower: number,
+  skill: ResolvedBandoriSkill,
   perfectRate: number,
+  comboOptions: ScoreComboOptions | undefined,
+  cache: ScoreCalculationCache | undefined,
+  calculate: () => number[],
 ): number[] {
-  return Array.from({ length: 6 }, (_, slotIndex) => getSkillWindowContribution(chart, skill, slotIndex, baseNoteScores, perfectRate));
+  if (!cache?.skillWindowContributionsByChart) {
+    return calculate();
+  }
+  let chartCache = cache.skillWindowContributionsByChart.get(chart);
+  if (!chartCache) {
+    chartCache = new Map();
+    cache.skillWindowContributionsByChart.set(chart, chartCache);
+  }
+  const cacheKey = [
+    bandPower,
+    perfectRate,
+    comboOptions?.startCombo ?? 0,
+    comboOptions?.useMedleyCombo ? 1 : 0,
+    skill.cacheKey,
+  ].join(":");
+  const cached = chartCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  const contributions = calculate();
+  chartCache.set(cacheKey, contributions);
+  return contributions;
 }
 
 export type SkillWindowScoreResult = {
@@ -213,7 +497,11 @@ export type SkillWindowScoreResult = {
   roomScoreRatePerPower?: number;
 };
 
-function emptyResult(): SkillWindowScoreResult {
+function isEligibleLeaderIndex(eligibleLeaderIndexes: readonly boolean[] | undefined, leaderIndex: number): boolean {
+  return eligibleLeaderIndexes === undefined || eligibleLeaderIndexes[leaderIndex] === true;
+}
+
+function createEmptySkillWindowScoreResult(): SkillWindowScoreResult {
   return {
     score: Number.NEGATIVE_INFINITY,
     averageScore: Number.NEGATIVE_INFINITY,
@@ -225,33 +513,226 @@ function emptyResult(): SkillWindowScoreResult {
   };
 }
 
-function assignmentStats(contributions: number[][]): {
-  max: number;
-  min: number;
-  count: number;
+type SkillAssignmentOptimization = {
+  maxScore: number;
+  minScore: number;
+  maxOrderCount: number;
   permutation: number[];
-} {
-  let max = Number.NEGATIVE_INFINITY;
-  let min = Number.POSITIVE_INFINITY;
-  let count = 0;
-  let selected = SKILL_ORDER_PERMUTATIONS[0];
-  for (const permutation of SKILL_ORDER_PERMUTATIONS) {
-    let value = 0;
-    for (let slot = 0; slot < 5; slot += 1) value += contributions[permutation[slot]]?.[slot] ?? 0;
-    if (value > max) {
-      max = value;
-      count = 1;
-      selected = permutation;
-    } else if (value === max) {
+};
+
+const SKILL_ASSIGNMENT_SIZE = 5;
+const SKILL_ASSIGNMENT_STATE_COUNT = 1 << SKILL_ASSIGNMENT_SIZE;
+const SKILL_ASSIGNMENT_FULL_MASK = SKILL_ASSIGNMENT_STATE_COUNT - 1;
+const ZERO_SKILL_WINDOW_CONTRIBUTIONS = [0, 0, 0, 0, 0, 0] as const;
+
+// When skill windows do not overlap, bitmask DP is exactly equivalent to enumerating all 5! skill-window assignments.
+const SKILL_ASSIGNMENT_SLOT_BY_MASK = Array.from(
+  { length: SKILL_ASSIGNMENT_STATE_COUNT },
+  (_, mask) => {
+    let count = 0;
+    let remaining = mask;
+    while (remaining > 0) {
+      remaining &= remaining - 1;
       count += 1;
     }
-    if (value < min) min = value;
+    return count;
+  },
+);
+const SKILL_ASSIGNMENT_TRANSITIONS = Array.from(
+  { length: SKILL_ASSIGNMENT_STATE_COUNT },
+  (_, mask) => {
+    const transitions: Array<[number, number]> = [];
+    for (let skillIndex = 0; skillIndex < SKILL_ASSIGNMENT_SIZE; skillIndex += 1) {
+      const skillBit = 1 << skillIndex;
+      if ((mask & skillBit) === 0) {
+        transitions.push([skillIndex, mask | skillBit]);
+      }
+    }
+    return transitions;
+  },
+);
+
+function decodeSkillPermutationCode(code: number): number[] {
+  const permutation = new Array<number>(SKILL_ASSIGNMENT_SIZE);
+  let remaining = code;
+  for (let index = SKILL_ASSIGNMENT_SIZE - 1; index >= 0; index -= 1) {
+    permutation[index] = remaining % SKILL_ASSIGNMENT_SIZE;
+    remaining = Math.trunc(remaining / SKILL_ASSIGNMENT_SIZE);
   }
-  return { max, min, count, permutation: selected };
+  return permutation;
 }
 
-function eligible(eligibleLeaderIndexes: readonly boolean[] | undefined, index: number): boolean {
-  return eligibleLeaderIndexes === undefined || eligibleLeaderIndexes[index] === true;
+function optimizeSkillAssignment(contributions: number[][]): SkillAssignmentOptimization {
+  // mask is the set of already assigned skills; slotIndex is derived from the assigned-skill count.
+  // On ties, keep the lexicographically smaller permutation so results stay stable.
+  const maxScores = new Float64Array(SKILL_ASSIGNMENT_STATE_COUNT);
+  const minScores = new Float64Array(SKILL_ASSIGNMENT_STATE_COUNT);
+  const maxOrderCounts = new Int16Array(SKILL_ASSIGNMENT_STATE_COUNT);
+  const maxPermutationCodes = new Int32Array(SKILL_ASSIGNMENT_STATE_COUNT);
+  maxScores.fill(Number.NEGATIVE_INFINITY);
+  minScores.fill(Number.POSITIVE_INFINITY);
+  maxPermutationCodes.fill(Number.MAX_SAFE_INTEGER);
+  maxScores[0] = 0;
+  minScores[0] = 0;
+  maxOrderCounts[0] = 1;
+  maxPermutationCodes[0] = 0;
+
+  for (let mask = 0; mask < SKILL_ASSIGNMENT_FULL_MASK; mask += 1) {
+    const slotIndex = SKILL_ASSIGNMENT_SLOT_BY_MASK[mask];
+    if (slotIndex >= SKILL_ASSIGNMENT_SIZE) {
+      continue;
+    }
+    const currentMaxScore = maxScores[mask];
+    const currentMinScore = minScores[mask];
+    const currentPermutationCode = maxPermutationCodes[mask];
+    for (const [skillIndex, nextMask] of SKILL_ASSIGNMENT_TRANSITIONS[mask]) {
+      const contribution = contributions[skillIndex][slotIndex];
+      const nextMaxScore = currentMaxScore + contribution;
+      const nextMinScore = currentMinScore + contribution;
+      if (nextMaxScore > maxScores[nextMask]) {
+        maxScores[nextMask] = nextMaxScore;
+        maxOrderCounts[nextMask] = maxOrderCounts[mask];
+        maxPermutationCodes[nextMask] = currentPermutationCode * SKILL_ASSIGNMENT_SIZE + skillIndex;
+      } else if (nextMaxScore === maxScores[nextMask]) {
+        maxOrderCounts[nextMask] += maxOrderCounts[mask];
+        const nextPermutationCode = currentPermutationCode * SKILL_ASSIGNMENT_SIZE + skillIndex;
+        if (nextPermutationCode < maxPermutationCodes[nextMask]) {
+          maxPermutationCodes[nextMask] = nextPermutationCode;
+        }
+      }
+      if (nextMinScore < minScores[nextMask]) {
+        minScores[nextMask] = nextMinScore;
+      }
+    }
+  }
+
+  return {
+    maxScore: maxScores[SKILL_ASSIGNMENT_FULL_MASK],
+    minScore: minScores[SKILL_ASSIGNMENT_FULL_MASK],
+    maxOrderCount: maxOrderCounts[SKILL_ASSIGNMENT_FULL_MASK],
+    permutation: decodeSkillPermutationCode(maxPermutationCodes[SKILL_ASSIGNMENT_FULL_MASK]),
+  };
+}
+
+function calculateNoFloorBaseScoreRatePerPower(
+  chart: PreparedChart,
+  perfectRate: number,
+  comboOptions?: ScoreComboOptions,
+): number {
+  if (chart.notesCount === 0) {
+    return 0;
+  }
+
+  const normalizedPerfectRate = clamp(perfectRate, 0, 1);
+  const judgeRate = JUDGE_PERCENT.perfect * normalizedPerfectRate + JUDGE_PERCENT.great * (1 - normalizedPerfectRate);
+  const baseScorePerPower = 3 * (1 + (chart.playLevel - 5) / 100) / chart.notesCount;
+  return chart.notes.reduce((sum, note, index) => (
+    sum + baseScorePerPower * judgeRate * getScoreComboMultiplier(index, comboOptions) * (note.fever ? 2 : 1)
+  ), 0);
+}
+
+function getCachedNoFloorBaseScoreRatePerPower(
+  chart: PreparedChart,
+  perfectRate: number,
+  comboOptions: ScoreComboOptions | undefined,
+  cache: ScoreCalculationCache | undefined,
+): number {
+  if (!cache?.noFloorBaseScoreRates) {
+    return calculateNoFloorBaseScoreRatePerPower(chart, perfectRate, comboOptions);
+  }
+  const cacheKey = [
+    chart.notesCount,
+    chart.playLevel,
+    perfectRate,
+    comboOptions?.startCombo ?? 0,
+    comboOptions?.useMedleyCombo ? 1 : 0,
+  ].join(":");
+  const cached = cache.noFloorBaseScoreRates.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const rate = calculateNoFloorBaseScoreRatePerPower(chart, perfectRate, comboOptions);
+  cache.noFloorBaseScoreRates.set(cacheKey, rate);
+  return rate;
+}
+
+function calculateResolvedSkillNoFloorRatesPerPower(
+  chart: PreparedChart,
+  skill: ResolvedBandoriSkill | null,
+  perfectRate: number,
+  comboOptions?: ScoreComboOptions,
+): SkillUpperRates {
+  if (!skill || skill.scoreEffects.length === 0 || chart.notesCount === 0) {
+    return {
+      maxRate: 0,
+      averageRate: 0,
+      leaderRate: 0,
+    };
+  }
+
+  const judgePercent = getExpectedJudgePercent(perfectRate);
+  const baseScorePerPower = 3 * (1 + (chart.playLevel - 5) / 100) / chart.notesCount;
+  const constantMultiplier = getGeneratedJudgeConstantSkillMultiplier(skill, perfectRate);
+  let bestWindowRate = 0;
+  let triggerWindowRateSum = 0;
+  let leaderWindowRate = 0;
+
+  for (let slotIndex = 0; slotIndex < 6; slotIndex += 1) {
+    const start = chart.skillStartNotes[slotIndex] ?? chart.notesCount;
+    const end = getSkillEndNote(chart, slotIndex, skill.durationSeconds);
+    const multipliers = Number.isFinite(constantMultiplier)
+      ? null
+      : buildSkillMultiplierList(chart, skill, slotIndex, perfectRate);
+    let windowRate = 0;
+    for (let noteIndex = start; noteIndex < end; noteIndex += 1) {
+      const note = chart.notes[noteIndex];
+      const multiplier = multipliers?.[noteIndex] ?? constantMultiplier;
+      windowRate += baseScorePerPower
+        * judgePercent
+        * getScoreComboMultiplier(noteIndex, comboOptions)
+        * (note.fever ? 2 : 1)
+        * Math.max(0, multiplier - 1);
+    }
+    bestWindowRate = Math.max(bestWindowRate, windowRate);
+    if (slotIndex < 5) {
+      triggerWindowRateSum += windowRate;
+    } else {
+      leaderWindowRate = windowRate;
+    }
+  }
+
+  return {
+    maxRate: bestWindowRate,
+    averageRate: triggerWindowRateSum / 5,
+    leaderRate: leaderWindowRate,
+  };
+}
+
+function getCachedResolvedSkillNoFloorRatesPerPower(
+  chart: PreparedChart,
+  skill: ResolvedBandoriSkill | null,
+  perfectRate: number,
+  comboOptions: ScoreComboOptions | undefined,
+  cache: ScoreCalculationCache | undefined,
+): SkillUpperRates {
+  if (!skill || !cache) {
+    return calculateResolvedSkillNoFloorRatesPerPower(chart, skill, perfectRate, comboOptions);
+  }
+
+  const cacheKey = [
+    perfectRate,
+    comboOptions?.startCombo ?? 0,
+    comboOptions?.useMedleyCombo ? 1 : 0,
+    skill.cacheKey,
+  ].join(":");
+  const cached = cache.noFloorSkillRates.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const rates = calculateResolvedSkillNoFloorRatesPerPower(chart, skill, perfectRate, comboOptions);
+  cache.noFloorSkillRates.set(cacheKey, rates);
+  return rates;
 }
 
 export function calculateBestScoreForNonOverlappingSkillWindowsTargetOnly(
@@ -259,82 +740,95 @@ export function calculateBestScoreForNonOverlappingSkillWindowsTargetOnly(
   bandPower: number,
   skills: Array<ResolvedBandoriSkill | null>,
   perfectRate: number,
-  _cache?: ScoreCalculationCache,
+  cache?: ScoreCalculationCache,
   comboOptions?: ScoreComboOptions,
 ): SkillWindowScoreResult {
-  return calculateBestScoreForNonOverlappingSkillWindows(
-    chart, bandPower, skills, perfectRate, _cache, undefined, comboOptions, true,
-  );
-}
+  const judgeList = getCachedJudgeList(chart.notesCount, perfectRate, cache);
+  const canUseConstantOnlyScoring = skills.every((skill) => (
+    !skill || Number.isFinite(getGeneratedJudgeConstantSkillMultiplier(skill, perfectRate))
+  ));
+  const innerScoreRates = canUseConstantOnlyScoring
+    ? getCachedInnerScoreRates(chart, judgeList, perfectRate, comboOptions, cache)
+    : null;
+  const innerScoreResult = innerScoreRates
+    ? null
+    : buildInnerScoreResult(chart, bandPower, judgeList, perfectRate, comboOptions, cache);
+  const innerScores = innerScoreResult?.scores ?? null;
+  const baseScore = innerScoreRates
+    ? getCachedBaseScoreFromRates(chart, bandPower, perfectRate, comboOptions, innerScoreRates, cache)
+    : innerScoreResult?.total ?? 0;
+  const constantWindowContributionCache = new Map<string, Int32Array>();
+  let averageTriggerContribution = 0;
+  let bestLeaderContribution = Number.NEGATIVE_INFINITY;
+  let selectedLeaderIndex = 0;
 
-export function calculateBestScoreForNonOverlappingSkillWindows(
-  chart: PreparedChart,
-  bandPower: number,
-  skills: Array<ResolvedBandoriSkill | null>,
-  perfectRate: number,
-  _cache?: ScoreCalculationCache,
-  encoreSkill?: ResolvedBandoriSkill | null,
-  comboOptions?: ScoreComboOptions,
-  targetOnly = false,
-  shouldCalculateDetailed?: (targetOnlyResult: SkillWindowScoreResult) => boolean,
-  eligibleLeaderIndexes?: readonly boolean[],
-): SkillWindowScoreResult {
-  const baseNoteScores = buildBaseNoteScores(chart, bandPower, perfectRate, comboOptions);
-  const baseScore = sumInt32(baseNoteScores);
-  const contributions = skills.map((skill) => getContributions(chart, skill, baseNoteScores, perfectRate));
-  const averageTriggerContribution = contributions.reduce((sum, contribution) => (
-    sum + contribution.slice(0, 5).reduce((a, b) => a + b, 0) / 5
-  ), 0);
-
-  let targetOnlyResult: SkillWindowScoreResult;
-  if (encoreSkill !== undefined) {
-    if (!eligible(eligibleLeaderIndexes, 0)) return emptyResult();
-    const encore = getContributions(chart, encoreSkill, baseNoteScores, perfectRate)[5] ?? 0;
-    const averageScore = Math.floor(baseScore + averageTriggerContribution + encore);
-    targetOnlyResult = { score: averageScore, averageScore, minScore: averageScore, maxScoreOrderCount: 0, maxScoreOrderTotal: 120, leaderIndex: 0, permutation: SKILL_ORDER_PERMUTATIONS[0] };
-  } else {
-    let bestAverage = Number.NEGATIVE_INFINITY;
-    let leaderIndex = 0;
-    for (let i = 0; i < skills.length; i += 1) {
-      if (!eligible(eligibleLeaderIndexes, i)) continue;
-      const average = Math.floor(baseScore + averageTriggerContribution + (contributions[i]?.[5] ?? 0));
-      if (average > bestAverage) { bestAverage = average; leaderIndex = i; }
+  for (let skillIndex = 0; skillIndex < skills.length; skillIndex += 1) {
+    const skill = skills[skillIndex];
+    const contributions = skill
+      ? getCachedSkillWindowContributions(
+        chart,
+        bandPower,
+        skill,
+        perfectRate,
+        comboOptions,
+        cache,
+        () => {
+          const constantMultiplier = getGeneratedJudgeConstantSkillMultiplier(skill, perfectRate);
+          if (innerScoreRates && Number.isFinite(constantMultiplier)) {
+            const windowContributions = calculateConstantWindowContributionsFromRates(
+              chart,
+              skill,
+              constantMultiplier,
+              bandPower,
+              innerScoreRates,
+              constantWindowContributionCache,
+            );
+            return Array.from(windowContributions);
+          }
+          if (canUseConstantOnlyScoring) {
+            return Array.from(ZERO_SKILL_WINDOW_CONTRIBUTIONS);
+          }
+          if (!innerScores) {
+            return Array.from(ZERO_SKILL_WINDOW_CONTRIBUTIONS);
+          }
+          return Array.from({ length: 6 }, (_, slotIndex) => (
+            calculateSkillExtraContribution(
+              chart,
+              skill,
+              slotIndex,
+              judgeList,
+              innerScores,
+              perfectRate,
+              cache,
+              constantWindowContributionCache,
+            )
+          ));
+        },
+      )
+      : ZERO_SKILL_WINDOW_CONTRIBUTIONS;
+    averageTriggerContribution += (
+      contributions[0]
+      + contributions[1]
+      + contributions[2]
+      + contributions[3]
+      + contributions[4]
+    ) / 5;
+    if (contributions[5] > bestLeaderContribution) {
+      bestLeaderContribution = contributions[5];
+      selectedLeaderIndex = skillIndex;
     }
-    targetOnlyResult = { score: bestAverage, averageScore: bestAverage, minScore: bestAverage, maxScoreOrderCount: 0, maxScoreOrderTotal: 120, leaderIndex, permutation: SKILL_ORDER_PERMUTATIONS[0] };
   }
 
-  if (targetOnly || (shouldCalculateDetailed && !shouldCalculateDetailed(targetOnlyResult))) return targetOnlyResult;
-  const assignment = assignmentStats(contributions);
-
-  if (encoreSkill !== undefined) {
-    const encore = getContributions(chart, encoreSkill, baseNoteScores, perfectRate)[5] ?? 0;
-    return {
-      score: baseScore + assignment.max + encore,
-      averageScore: targetOnlyResult.averageScore,
-      minScore: baseScore + assignment.min + encore,
-      maxScoreOrderCount: assignment.count,
-      maxScoreOrderTotal: 120,
-      leaderIndex: 0,
-      permutation: assignment.permutation,
-    };
-  }
-
-  let best: SkillWindowScoreResult | null = null;
-  for (let i = 0; i < skills.length; i += 1) {
-    if (!eligible(eligibleLeaderIndexes, i)) continue;
-    const encore = contributions[i]?.[5] ?? 0;
-    const candidate: SkillWindowScoreResult = {
-      score: baseScore + assignment.max + encore,
-      averageScore: Math.floor(baseScore + averageTriggerContribution + encore),
-      minScore: baseScore + assignment.min + encore,
-      maxScoreOrderCount: assignment.count,
-      maxScoreOrderTotal: 120,
-      leaderIndex: i,
-      permutation: assignment.permutation,
-    };
-    if (!best || candidate.averageScore > best.averageScore || (candidate.averageScore === best.averageScore && candidate.score > best.score)) best = candidate;
-  }
-  return best ?? emptyResult();
+  const averageScore = Math.floor(baseScore + averageTriggerContribution + Math.max(0, bestLeaderContribution));
+  return {
+    score: averageScore,
+    averageScore,
+    minScore: averageScore,
+    maxScoreOrderCount: 0,
+    maxScoreOrderTotal: SKILL_ORDER_PERMUTATIONS.length,
+    leaderIndex: selectedLeaderIndex,
+    permutation: SKILL_ORDER_PERMUTATIONS[0],
+  };
 }
 
 export function calculateBestMultiLiveScoreForSkillWindows(
@@ -345,108 +839,587 @@ export function calculateBestMultiLiveScoreForSkillWindows(
   encoreSkillSource: BandoriTeamSearchInput["encoreSkillSource"],
   cards: SearchCard[],
   perfectRate: number,
-  _cache?: ScoreCalculationCache,
+  cache?: ScoreCalculationCache,
   comboOptions?: ScoreComboOptions,
   targetOnly = false,
   shouldCalculateDetailed?: (targetOnlyResult: SkillWindowScoreResult) => boolean,
   eligibleLeaderIndexes?: readonly boolean[],
 ): SkillWindowScoreResult {
-  const baseNoteScores = buildBaseNoteScores(chart, bandPower, perfectRate, comboOptions);
-  const baseScore = sumInt32(baseNoteScores);
-  const other = otherSkills.slice(0, 4).map((skill) => getContributions(chart, skill, baseNoteScores, perfectRate));
-  while (other.length < 4) other.push([0, 0, 0, 0, 0, 0]);
-  const externalEncoreIndex = encoreSkillSource?.startsWith("other") ? Number(encoreSkillSource.replace("other", "")) - 1 : -1;
-  let best: SkillWindowScoreResult | null = null;
+  // In multi live, the leader skill and other-player skills share the first 5 trigger windows; the 6th window is chosen by encore source.
+  // Calculate averageScore first as the search target, then fill max/min and skill-order details only if the team can still enter top-N.
+  const judgeList = getCachedJudgeList(chart.notesCount, perfectRate, cache);
+  const relevantSkills = [...selfSkills, ...otherSkills.slice(0, 4)];
+  const canUseConstantOnlyScoring = relevantSkills.every((skill) => (
+    !skill || Number.isFinite(getGeneratedJudgeConstantSkillMultiplier(skill, perfectRate))
+  ));
+  const innerScoreRates = canUseConstantOnlyScoring
+    ? getCachedInnerScoreRates(chart, judgeList, perfectRate, comboOptions, cache)
+    : null;
+  const innerScoreResult = innerScoreRates
+    ? null
+    : buildInnerScoreResult(chart, bandPower, judgeList, perfectRate, comboOptions, cache);
+  const innerScores = innerScoreResult?.scores ?? null;
+  const baseScore = innerScoreRates
+    ? getCachedBaseScoreFromRates(chart, bandPower, perfectRate, comboOptions, innerScoreRates, cache)
+    : innerScoreResult?.total ?? 0;
+  const zeroContributions = [0, 0, 0, 0, 0, 0];
+  const contributionCache = new Map<string, number[]>();
+  const constantWindowContributionCache = new Map<string, Int32Array>();
+  const getContributions = (skill: ResolvedBandoriSkill | null | undefined): number[] => {
+    if (!skill) {
+      return zeroContributions;
+    }
+    const cached = contributionCache.get(skill.cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const contributions = getCachedSkillWindowContributions(
+      chart,
+      bandPower,
+      skill,
+      perfectRate,
+      comboOptions,
+      cache,
+      () => {
+        const constantMultiplier = getGeneratedJudgeConstantSkillMultiplier(skill, perfectRate);
+        if (innerScoreRates && Number.isFinite(constantMultiplier)) {
+          const windowContributions = calculateConstantWindowContributionsFromRates(
+            chart,
+            skill,
+            constantMultiplier,
+            bandPower,
+            innerScoreRates,
+            constantWindowContributionCache,
+          );
+          return Array.from(windowContributions);
+        }
+        if (canUseConstantOnlyScoring) {
+          return zeroContributions;
+        }
+        if (!innerScores) {
+          return zeroContributions;
+        }
+        return Array.from({ length: 6 }, (_, slotIndex) => (
+          calculateSkillExtraContribution(
+            chart,
+            skill,
+            slotIndex,
+            judgeList,
+            innerScores,
+            perfectRate,
+            cache,
+            constantWindowContributionCache,
+          )
+        ));
+      },
+    );
+    contributionCache.set(skill.cacheKey, contributions);
+    return contributions;
+  };
+  const selfContributions = selfSkills.map((skill) => getContributions(skill));
+  const otherContributions = otherSkills.slice(0, 4).map((skill) => getContributions(skill));
+  while (otherContributions.length < 4) {
+    otherContributions.push(zeroContributions);
+  }
+  const otherTriggerContributionAverage = otherContributions.reduce((sum, contribution) => (
+    sum + (contribution[0] + contribution[1] + contribution[2] + contribution[3] + contribution[4]) / 5
+  ), 0);
+  // Estimate other-player score with no-floor score per power, avoiding magnified error from a floored own-score ratio.
+  const noFloorBaseScoreRate = getCachedNoFloorBaseScoreRatePerPower(chart, perfectRate, comboOptions, cache);
+  const selfNoFloorRates = selfSkills.map((skill) => getCachedResolvedSkillNoFloorRatesPerPower(
+    chart,
+    skill,
+    perfectRate,
+    comboOptions,
+    cache,
+  ));
+  const otherNoFloorRates = otherSkills.slice(0, 4).map((skill) => getCachedResolvedSkillNoFloorRatesPerPower(
+    chart,
+    skill,
+    perfectRate,
+    comboOptions,
+    cache,
+  ));
+  while (otherNoFloorRates.length < 4) {
+    otherNoFloorRates.push({ maxRate: 0, averageRate: 0, leaderRate: 0 });
+  }
+  const otherTriggerNoFloorRateAverage = otherNoFloorRates.reduce((sum, rate) => sum + rate.averageRate, 0);
+  const externalEncoreIndex = encoreSkillSource?.startsWith("other")
+    ? Number(encoreSkillSource.replace("other", "")) - 1
+    : -1;
+  let targetOnlyResult: SkillWindowScoreResult | null = null;
 
   for (let leaderIndex = 0; leaderIndex < selfSkills.length; leaderIndex += 1) {
-    if (!eligible(eligibleLeaderIndexes, leaderIndex)) continue;
-    const self = getContributions(chart, selfSkills[leaderIndex], baseNoteScores, perfectRate);
-    const actors = [self, other[0], other[1], other[2], other[3]];
-    const assignment = assignmentStats(actors);
-    const averageTriggers = actors.reduce((sum, c) => sum + c.slice(0, 5).reduce((a, b) => a + b, 0) / 5, 0);
-    const encore = externalEncoreIndex >= 0 ? other[externalEncoreIndex]?.[5] ?? 0 : self[5] ?? 0;
-    const averageScore = Math.floor(baseScore + averageTriggers + encore);
-    const targetResult: SkillWindowScoreResult = {
-      score: averageScore,
-      averageScore,
-      rawAverageScore: baseScore + averageTriggers + encore,
-      minScore: averageScore,
-      maxScoreOrderCount: 0,
-      maxScoreOrderTotal: 120,
-      leaderIndex,
-      permutation: SKILL_ORDER_PERMUTATIONS[0],
-    };
-    if (targetOnly || (shouldCalculateDetailed && !shouldCalculateDetailed(targetResult))) {
-      if (!best || targetResult.averageScore > best.averageScore) best = targetResult;
+    if (!isEligibleLeaderIndex(eligibleLeaderIndexes, leaderIndex)) {
       continue;
     }
+
+    const leaderContributions = selfContributions[leaderIndex] ?? zeroContributions;
+    const averageTriggerContribution = otherTriggerContributionAverage
+      + (leaderContributions[0] + leaderContributions[1] + leaderContributions[2] + leaderContributions[3] + leaderContributions[4]) / 5;
+    const encoreContribution = externalEncoreIndex >= 0
+      ? otherContributions[externalEncoreIndex]?.[5] ?? 0
+      : leaderContributions[5] ?? 0;
+    const roomScoreRatePerPower = noFloorBaseScoreRate
+      + otherTriggerNoFloorRateAverage
+      + (selfNoFloorRates[leaderIndex]?.averageRate ?? 0)
+      + (
+        externalEncoreIndex >= 0
+          ? otherNoFloorRates[externalEncoreIndex]?.leaderRate ?? 0
+          : selfNoFloorRates[leaderIndex]?.leaderRate ?? 0
+      );
+    const rawAverageScore = baseScore + averageTriggerContribution + encoreContribution;
+    const averageScore = Math.floor(rawAverageScore);
+    const candidate: SkillWindowScoreResult = {
+      score: averageScore,
+      averageScore,
+      rawAverageScore,
+      minScore: averageScore,
+      maxScoreOrderCount: 0,
+      maxScoreOrderTotal: SKILL_ORDER_PERMUTATIONS.length,
+      leaderIndex,
+      permutation: SKILL_ORDER_PERMUTATIONS[0],
+      roomScoreRatePerPower,
+    };
+    if (
+      targetOnlyResult === null
+      || candidate.averageScore > targetOnlyResult.averageScore
+      || (
+        candidate.averageScore === targetOnlyResult.averageScore
+        && (candidate.roomScoreRatePerPower ?? 0) > (targetOnlyResult.roomScoreRatePerPower ?? 0)
+      )
+    ) {
+      targetOnlyResult = candidate;
+    }
+  }
+
+  if (
+    targetOnly
+    || (
+      targetOnlyResult
+      && shouldCalculateDetailed
+      && !shouldCalculateDetailed(targetOnlyResult)
+    )
+  ) {
+    return targetOnlyResult ?? createEmptySkillWindowScoreResult();
+  }
+
+  let bestResult: SkillWindowScoreResult | null = null;
+
+  for (let leaderIndex = 0; leaderIndex < selfSkills.length; leaderIndex += 1) {
+    if (!isEligibleLeaderIndex(eligibleLeaderIndexes, leaderIndex)) {
+      continue;
+    }
+
+    const leaderContributions = selfContributions[leaderIndex] ?? zeroContributions;
+    const triggerContributions = [
+      leaderContributions,
+      otherContributions[0],
+      otherContributions[1],
+      otherContributions[2],
+      otherContributions[3],
+    ];
+    const averageTriggerContribution = otherTriggerContributionAverage
+      + (leaderContributions[0] + leaderContributions[1] + leaderContributions[2] + leaderContributions[3] + leaderContributions[4]) / 5;
+    const encoreContribution = externalEncoreIndex >= 0
+      ? otherContributions[externalEncoreIndex]?.[5] ?? 0
+      : leaderContributions[5] ?? 0;
+    const roomScoreRatePerPower = noFloorBaseScoreRate
+      + otherTriggerNoFloorRateAverage
+      + (selfNoFloorRates[leaderIndex]?.averageRate ?? 0)
+      + (
+        externalEncoreIndex >= 0
+          ? otherNoFloorRates[externalEncoreIndex]?.leaderRate ?? 0
+          : selfNoFloorRates[leaderIndex]?.leaderRate ?? 0
+      );
+    const rawAverageScore = baseScore + averageTriggerContribution + encoreContribution;
+    const averageScore = Math.floor(rawAverageScore);
+
+    const assignment = optimizeSkillAssignment(triggerContributions);
+    const result: SkillWindowScoreResult = {
+      score: baseScore + assignment.maxScore + encoreContribution,
+      averageScore,
+      rawAverageScore,
+      minScore: baseScore + assignment.minScore + encoreContribution,
+      maxScoreOrderCount: assignment.maxOrderCount,
+      maxScoreOrderTotal: SKILL_ORDER_PERMUTATIONS.length,
+      leaderIndex,
+      permutation: assignment.permutation,
+      roomScoreRatePerPower,
+    };
+    const skillOrderCardIds = [
+      ...result.permutation.map((skillIndex) => (
+        skillIndex === 0 ? cards[leaderIndex].cardId : 0
+      )),
+      externalEncoreIndex >= 0 ? 0 : cards[leaderIndex].cardId,
+    ];
     const skillOrderActors: BandoriTeamSearchSkillOrderActor[] = [
-      ...assignment.permutation.map((skillIndex) => skillIndex === 0 ? "self" : `other${skillIndex}` as BandoriTeamSearchSkillOrderActor),
+      ...result.permutation.map((skillIndex) => (
+        skillIndex === 0 ? "self" : `other${skillIndex}` as BandoriTeamSearchSkillOrderActor
+      )),
       externalEncoreIndex >= 0 ? `other${externalEncoreIndex + 1}` as BandoriTeamSearchSkillOrderActor : "self",
     ];
     const candidate: SkillWindowScoreResult = {
-      score: baseScore + assignment.max + encore,
-      averageScore,
-      rawAverageScore: targetResult.rawAverageScore,
-      minScore: baseScore + assignment.min + encore,
-      maxScoreOrderCount: assignment.count,
-      maxScoreOrderTotal: 120,
+      ...result,
       leaderIndex,
-      permutation: assignment.permutation,
-      skillOrderCardIds: [...assignment.permutation.map((skillIndex) => skillIndex === 0 ? cards[leaderIndex]?.cardId ?? 0 : 0), externalEncoreIndex >= 0 ? 0 : cards[leaderIndex]?.cardId ?? 0],
+      skillOrderCardIds,
       skillOrderActors,
     };
-    if (!best || candidate.averageScore > best.averageScore || (candidate.averageScore === best.averageScore && candidate.score > best.score)) best = candidate;
+
+    if (
+      bestResult === null
+      || candidate.averageScore > bestResult.averageScore
+      || (
+        candidate.averageScore === bestResult.averageScore
+        && candidate.score > bestResult.score
+      )
+    ) {
+      bestResult = candidate;
+    }
   }
-  return best ?? emptyResult();
+
+  return bestResult ?? createEmptySkillWindowScoreResult();
+}
+
+export function calculateBestScoreForNonOverlappingSkillWindows(
+  chart: PreparedChart,
+  bandPower: number,
+  skills: Array<ResolvedBandoriSkill | null>,
+  perfectRate: number,
+  cache?: ScoreCalculationCache,
+  encoreSkill?: ResolvedBandoriSkill | null,
+  comboOptions?: ScoreComboOptions,
+  targetOnly = false,
+  shouldCalculateDetailed?: (targetOnlyResult: SkillWindowScoreResult) => boolean,
+  eligibleLeaderIndexes?: readonly boolean[],
+): SkillWindowScoreResult {
+  // Solo/normal scoring assumes the 5 normal skill windows do not overlap, so trigger order only maps cards onto windows.
+  // When encoreSkill is defined, the 6th window is fixed to that external/leader skill.
+  const judgeList = getCachedJudgeList(chart.notesCount, perfectRate, cache);
+  const relevantSkills = encoreSkill === undefined ? skills : [...skills, encoreSkill];
+  const canUseConstantOnlyScoring = relevantSkills.every((skill) => (
+    !skill || Number.isFinite(getGeneratedJudgeConstantSkillMultiplier(skill, perfectRate))
+  ));
+  const innerScoreRates = canUseConstantOnlyScoring
+    ? getCachedInnerScoreRates(chart, judgeList, perfectRate, comboOptions, cache)
+    : null;
+  const innerScoreResult = innerScoreRates
+    ? null
+    : buildInnerScoreResult(chart, bandPower, judgeList, perfectRate, comboOptions, cache);
+  const innerScores = innerScoreResult?.scores ?? null;
+  const baseScore = innerScoreRates
+    ? getCachedBaseScoreFromRates(chart, bandPower, perfectRate, comboOptions, innerScoreRates, cache)
+    : innerScoreResult?.total ?? 0;
+
+  const constantWindowContributionCache = new Map<string, Int32Array>();
+  const zeroContributions = [0, 0, 0, 0, 0, 0];
+  const contributionCache = new Map<string, number[]>();
+  const getContributions = (skill: ResolvedBandoriSkill | null | undefined): number[] => {
+    if (!skill) {
+      return zeroContributions;
+    }
+    const cached = contributionCache.get(skill.cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const contributions = getCachedSkillWindowContributions(
+      chart,
+      bandPower,
+      skill,
+      perfectRate,
+      comboOptions,
+      cache,
+      () => {
+        const constantMultiplier = getGeneratedJudgeConstantSkillMultiplier(skill, perfectRate);
+        if (innerScoreRates && Number.isFinite(constantMultiplier)) {
+          const windowContributions = calculateConstantWindowContributionsFromRates(
+            chart,
+            skill,
+            constantMultiplier,
+            bandPower,
+            innerScoreRates,
+            constantWindowContributionCache,
+          );
+          return Array.from(windowContributions);
+        }
+        if (canUseConstantOnlyScoring) {
+          return zeroContributions;
+        }
+        if (!innerScores) {
+          return zeroContributions;
+        }
+        return Array.from({ length: 6 }, (_, slotIndex) => (
+          calculateSkillExtraContribution(
+            chart,
+            skill,
+            slotIndex,
+            judgeList,
+            innerScores,
+            perfectRate,
+            cache,
+            constantWindowContributionCache,
+          )
+        ));
+      },
+    );
+    contributionCache.set(skill.cacheKey, contributions);
+    return contributions;
+  };
+  const contributions = skills.map((skill) => getContributions(skill));
+  const averageTriggerContribution = contributions.reduce((sum, contribution) => (
+    sum + (contribution[0] + contribution[1] + contribution[2] + contribution[3] + contribution[4]) / 5
+  ), 0);
+
+  let targetOnlyResult: SkillWindowScoreResult | null = null;
+  if (encoreSkill !== undefined) {
+    if (!isEligibleLeaderIndex(eligibleLeaderIndexes, 0)) {
+      return createEmptySkillWindowScoreResult();
+    }
+
+    const leaderContribution = getContributions(encoreSkill)[5];
+    const averageScore = Math.floor(baseScore + averageTriggerContribution + leaderContribution);
+    targetOnlyResult = {
+      score: averageScore,
+      averageScore,
+      minScore: averageScore,
+      maxScoreOrderCount: 0,
+      maxScoreOrderTotal: SKILL_ORDER_PERMUTATIONS.length,
+      leaderIndex: 0,
+      permutation: SKILL_ORDER_PERMUTATIONS[0],
+    };
+  } else {
+    let bestAverageScore = Number.NEGATIVE_INFINITY;
+    let selectedLeaderIndex = 0;
+    for (let leaderIndex = 0; leaderIndex < skills.length; leaderIndex += 1) {
+      if (!isEligibleLeaderIndex(eligibleLeaderIndexes, leaderIndex)) {
+        continue;
+      }
+
+      const averageScore = Math.floor(baseScore + averageTriggerContribution + contributions[leaderIndex][5]);
+      if (averageScore > bestAverageScore) {
+        bestAverageScore = averageScore;
+        selectedLeaderIndex = leaderIndex;
+      }
+    }
+    targetOnlyResult = {
+      score: bestAverageScore,
+      averageScore: bestAverageScore,
+      minScore: bestAverageScore,
+      maxScoreOrderCount: 0,
+      maxScoreOrderTotal: SKILL_ORDER_PERMUTATIONS.length,
+      leaderIndex: selectedLeaderIndex,
+      permutation: SKILL_ORDER_PERMUTATIONS[0],
+    };
+  }
+
+  if (
+    targetOnly
+    || (
+      targetOnlyResult
+      && shouldCalculateDetailed
+      && !shouldCalculateDetailed(targetOnlyResult)
+    )
+  ) {
+    return targetOnlyResult;
+  }
+
+  const assignment = optimizeSkillAssignment(contributions);
+  const bestTriggerScore = assignment.maxScore;
+  const minTriggerScore = assignment.minScore;
+  const bestTriggerScoreOrderCount = assignment.maxOrderCount;
+  const bestTriggerPermutation = assignment.permutation;
+  let bestAverageScore = Number.NEGATIVE_INFINITY;
+  let selectedMaxScore = Number.NEGATIVE_INFINITY;
+  let selectedMinScore = 0;
+  let selectedLeaderIndex = 0;
+  let selectedPermutation = bestTriggerPermutation;
+  let selectedMaxScoreOrderCount = 0;
+
+  if (encoreSkill !== undefined) {
+    const leaderContribution = getContributions(encoreSkill)[5];
+    return {
+      score: baseScore + leaderContribution + bestTriggerScore,
+      averageScore: Math.floor(baseScore + averageTriggerContribution + leaderContribution),
+      minScore: baseScore + leaderContribution + minTriggerScore,
+      maxScoreOrderCount: bestTriggerScoreOrderCount,
+      maxScoreOrderTotal: SKILL_ORDER_PERMUTATIONS.length,
+      leaderIndex: 0,
+      permutation: bestTriggerPermutation,
+    };
+  }
+
+  for (let leaderIndex = 0; leaderIndex < skills.length; leaderIndex += 1) {
+    if (!isEligibleLeaderIndex(eligibleLeaderIndexes, leaderIndex)) {
+      continue;
+    }
+
+    const leaderContribution = contributions[leaderIndex][5];
+    const leaderAverageScore = Math.floor(baseScore + averageTriggerContribution + leaderContribution);
+    if (leaderAverageScore < bestAverageScore) {
+      continue;
+    }
+
+    const leaderBestScore = baseScore + leaderContribution + bestTriggerScore;
+    if (
+      leaderAverageScore > bestAverageScore
+      || (leaderAverageScore === bestAverageScore && leaderBestScore > selectedMaxScore)
+    ) {
+      bestAverageScore = leaderAverageScore;
+      selectedMaxScore = leaderBestScore;
+      selectedMinScore = baseScore + leaderContribution + minTriggerScore;
+      selectedLeaderIndex = leaderIndex;
+      selectedPermutation = bestTriggerPermutation;
+      selectedMaxScoreOrderCount = bestTriggerScoreOrderCount;
+    }
+  }
+
+  return {
+    score: selectedMaxScore,
+    averageScore: bestAverageScore,
+    minScore: selectedMinScore,
+    maxScoreOrderCount: selectedMaxScoreOrderCount,
+    maxScoreOrderTotal: SKILL_ORDER_PERMUTATIONS.length,
+    leaderIndex: selectedLeaderIndex,
+    permutation: selectedPermutation,
+  };
 }
 
 export function calculateBaseScoreRatePerPower(chart: PreparedChart, comboOptions?: ScoreComboOptions): number {
-  if (chart.notesCount === 0) return 0;
-  const base = 3 * (1 + (chart.playLevel - 5) / 100) / chart.notesCount;
-  return chart.notes.reduce((sum, note, index) => sum + base * JUDGE_PERCENT.perfect * getScoreComboMultiplier(index, comboOptions) * (note.fever ? 2 : 1), 0);
+  if (chart.notesCount === 0) {
+    return 0;
+  }
+
+  const baseScorePerPower = 3 * (1 + (chart.playLevel - 5) / 100) / chart.notesCount;
+  return chart.notes.reduce((sum, note, index) => (
+    sum + baseScorePerPower * JUDGE_PERCENT.perfect * getScoreComboMultiplier(index, comboOptions) * (note.fever ? 2 : 1)
+  ), 0);
 }
 
+// The coarse bound only needs the highest rate the skill can possibly provide, without resolving full team context.
 function getSkillMaxValuePercent(skill: BestdoriSkillMaster | undefined, server: number): number {
-  if (!skill) return 0;
+  if (!skill) {
+    return 0;
+  }
+
   const effects = skill.activationEffect?.activateEffectTypes ?? {};
-  const maxEffect = Object.entries(effects).reduce((max, [type, effect]) => type === "score_rate_up_with_perfect" ? max : Math.max(max, getRegionalNumber(effect.activateEffectValue, server) ?? 0), 0);
-  const unified = getRegionalNumber(skill.activationEffect?.unificationActivateEffectValue, server) ?? 0;
-  return Math.max(maxEffect, unified) + ("score_rate_up_with_perfect" in effects ? 50 : 0);
+  const maxEffectValue = Object.entries(effects).reduce((max, [type, effect]) => {
+    if (type === "score_rate_up_with_perfect") {
+      return max;
+    }
+    return Math.max(max, getRegionalNumber(effect.activateEffectValue, server) ?? 0);
+  }, 0);
+  const unifiedValue = getRegionalNumber(skill.activationEffect?.unificationActivateEffectValue, server) ?? 0;
+  const rateUpBonus = "score_rate_up_with_perfect" in effects ? 50 : 0;
+  return Math.max(maxEffectValue, unifiedValue) + rateUpBonus;
 }
 
 export function getSkillDurationSeconds(skill: BestdoriSkillMaster | undefined, skillLevel: number, server: number): number {
-  if (!skill) return 0;
-  const level = clamp(Math.trunc(skillLevel), 1, 5);
-  return getRegionalNumber(Array.isArray(skill.duration) ? skill.duration[level - 1] : skill.duration, server) ?? 0;
-}
-
-function windowUpperRates(chart: PreparedChart, valuePercent: number, durationSeconds: number, comboOptions?: ScoreComboOptions): SkillUpperRates {
-  if (valuePercent <= 0 || durationSeconds <= 0 || chart.notesCount === 0) return { maxRate: 0, averageRate: 0, leaderRate: 0 };
-  const base = 3 * (1 + (chart.playLevel - 5) / 100) / chart.notesCount;
-  let maxRate = 0; let triggerSum = 0; let leaderRate = 0;
-  for (let slot = 0; slot < 6; slot += 1) {
-    const start = chart.skillStartNotes[slot] ?? chart.notesCount;
-    const end = getSkillEndNote(chart, slot, durationSeconds);
-    let rate = 0;
-    for (let i = start; i < end; i += 1) rate += base * JUDGE_PERCENT.perfect * getScoreComboMultiplier(i, comboOptions) * (chart.notes[i].fever ? 2 : 1);
-    maxRate = Math.max(maxRate, rate);
-    if (slot < 5) triggerSum += rate; else leaderRate = rate;
+  if (!skill) {
+    return 0;
   }
-  const multiplier = valuePercent / 100;
-  return { maxRate: maxRate * multiplier, averageRate: (triggerSum / 5) * multiplier, leaderRate: leaderRate * multiplier };
+
+  const normalizedSkillLevel = clamp(Math.trunc(skillLevel), 1, 5);
+  return getRegionalNumber(
+    Array.isArray(skill.duration) ? skill.duration[normalizedSkillLevel - 1] : skill.duration,
+    server,
+  ) ?? 0;
 }
 
-export function calculateSkillUpperRatesPerPower(chart: PreparedChart, skill: BestdoriSkillMaster | undefined, skillLevel: number, server: number, comboOptions?: ScoreComboOptions): SkillUpperRates {
-  return windowUpperRates(chart, getSkillMaxValuePercent(skill, server), getSkillDurationSeconds(skill, skillLevel, server), comboOptions);
+export function calculateSkillUpperRatesPerPower(
+  chart: PreparedChart,
+  skill: BestdoriSkillMaster | undefined,
+  skillLevel: number,
+  server: number,
+  comboOptions?: ScoreComboOptions,
+): SkillUpperRates {
+  // This bound is intentionally optimistic: PERFECT judgment, best window, and maximum skill value for safe pruning and ordering.
+  const valuePercent = getSkillMaxValuePercent(skill, server);
+  const durationSeconds = getSkillDurationSeconds(skill, skillLevel, server);
+  if (valuePercent <= 0 || durationSeconds <= 0 || chart.notesCount === 0) {
+    return {
+      maxRate: 0,
+      averageRate: 0,
+      leaderRate: 0,
+    };
+  }
+
+  const baseScorePerPower = 3 * (1 + (chart.playLevel - 5) / 100) / chart.notesCount;
+  let bestWindowRate = 0;
+  let triggerWindowRateSum = 0;
+  let leaderWindowRate = 0;
+  for (let slotIndex = 0; slotIndex < 6; slotIndex += 1) {
+    const start = chart.skillStartNotes[slotIndex] ?? chart.notesCount;
+    const end = getSkillEndNote(chart, slotIndex, durationSeconds);
+    let windowRate = 0;
+    for (let noteIndex = start; noteIndex < end; noteIndex += 1) {
+      const note = chart.notes[noteIndex];
+      windowRate += baseScorePerPower * JUDGE_PERCENT.perfect * getScoreComboMultiplier(noteIndex, comboOptions) * (note.fever ? 2 : 1);
+    }
+    bestWindowRate = Math.max(bestWindowRate, windowRate);
+    if (slotIndex < 5) {
+      triggerWindowRateSum += windowRate;
+    } else {
+      leaderWindowRate = windowRate;
+    }
+  }
+
+  return {
+    maxRate: bestWindowRate * (valuePercent / 100),
+    averageRate: (triggerWindowRateSum / 5) * (valuePercent / 100),
+    leaderRate: leaderWindowRate * (valuePercent / 100),
+  };
 }
 
 export function getResolvedSkillMaxScoreUpPercent(skill: ResolvedBandoriSkill | null): number {
-  if (!skill) return 0;
-  const maxEffect = skill.scoreEffects.reduce((max, effect) => effect.type === "score_rate_up_with_perfect" ? max : Math.max(max, effect.valuePercent), 0);
-  return maxEffect + (skill.hasRateUpWithPerfect ? 50 : 0);
+  if (!skill) {
+    return 0;
+  }
+
+  const maxEffectValue = skill.scoreEffects.reduce((max, effect) => (
+    effect.type === "score_rate_up_with_perfect" ? max : Math.max(max, effect.valuePercent)
+  ), 0);
+  return maxEffectValue + (skill.hasRateUpWithPerfect ? 50 : 0);
 }
 
-export function calculateResolvedSkillUpperRatesPerPower(chart: PreparedChart, skill: ResolvedBandoriSkill | null, comboOptions?: ScoreComboOptions): SkillUpperRates {
-  return windowUpperRates(chart, getResolvedSkillMaxScoreUpPercent(skill), skill?.durationSeconds ?? 0, comboOptions);
+export function calculateResolvedSkillUpperRatesPerPower(
+  chart: PreparedChart,
+  skill: ResolvedBandoriSkill | null,
+  comboOptions?: ScoreComboOptions,
+): SkillUpperRates {
+  // Resolved skills can include same-band/same-attribute conditions, so these feed tighter context-partitioned bounds.
+  const valuePercent = getResolvedSkillMaxScoreUpPercent(skill);
+  const durationSeconds = skill?.durationSeconds ?? 0;
+  if (valuePercent <= 0 || durationSeconds <= 0 || chart.notesCount === 0) {
+    return {
+      maxRate: 0,
+      averageRate: 0,
+      leaderRate: 0,
+    };
+  }
+
+  const baseScorePerPower = 3 * (1 + (chart.playLevel - 5) / 100) / chart.notesCount;
+  let bestWindowRate = 0;
+  let triggerWindowRateSum = 0;
+  let leaderWindowRate = 0;
+  for (let slotIndex = 0; slotIndex < 6; slotIndex += 1) {
+    const start = chart.skillStartNotes[slotIndex] ?? chart.notesCount;
+    const end = getSkillEndNote(chart, slotIndex, durationSeconds);
+    let windowRate = 0;
+    for (let noteIndex = start; noteIndex < end; noteIndex += 1) {
+      const note = chart.notes[noteIndex];
+      windowRate += baseScorePerPower * JUDGE_PERCENT.perfect * getScoreComboMultiplier(noteIndex, comboOptions) * (note.fever ? 2 : 1);
+    }
+    bestWindowRate = Math.max(bestWindowRate, windowRate);
+    if (slotIndex < 5) {
+      triggerWindowRateSum += windowRate;
+    } else {
+      leaderWindowRate = windowRate;
+    }
+  }
+
+  return {
+    maxRate: bestWindowRate * (valuePercent / 100),
+    averageRate: (triggerWindowRateSum / 5) * (valuePercent / 100),
+    leaderRate: leaderWindowRate * (valuePercent / 100),
+  };
 }

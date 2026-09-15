@@ -56,8 +56,8 @@ export type BestdoriCardMaster = {
 };
 
 export type BestdoriAreaItemMaster = {
-  targetAttributes?: unknown[];
-  targetBandIds?: unknown[];
+  targetAttributes?: unknown;
+  targetBandIds?: unknown;
   performance?: Record<string, unknown>;
   technique?: Record<string, unknown>;
   visual?: Record<string, unknown>;

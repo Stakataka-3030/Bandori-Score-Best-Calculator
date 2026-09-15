@@ -76,8 +76,10 @@ export type BandoriTeamSearchSkillOrderActor = "self" | "other1" | "other2" | "o
 
 export type BandoriTeamSearchResult = {
   rank: number;
+  // targetValue is the actual ranking key: averageScore for score searches, sortable event-point base for PT searches.
   score: number;
   targetValue: number;
+  // averageScore drives search ranking; max/min describe the theoretical spread from skill order.
   averageScore: number;
   maxScore: number;
   minScore: number;
@@ -145,6 +147,7 @@ export type BandoriTeamSearchStats = {
   supportAwareCompressionPrunedCount: number;
   tightUpperBoundCount: number;
   tightUpperBoundPrunedBranchCount: number;
+  // Backward-compatible UI names; currently filled from correlated/tight upper-bound stats.
   secondLevelBoundCount: number;
   secondLevelPrunedCount: number;
   rootConfigSkippedCount: number;
@@ -171,7 +174,9 @@ export type BandoriTeamSearchEventType =
   | "medley";
 
 export type BandoriTeamSearchLiveType = "free" | "multi" | "challenge" | "versus";
+
 export type BandoriTeamSearchTarget = "score" | "eventPoint";
+
 export type BandoriTeamSearchEventMode = "none" | "parameterPower" | "pointBonus";
 
 export type BandoriTeamSearchConstraints = {
@@ -217,8 +222,10 @@ export type BandoriTeamSearchInput = {
 };
 
 export type SearchCard = CalculatedBandoriCard & {
+  // Team power after the current area-item and event parameter bonuses; DFS bounds use this value only.
   effectivePower: number;
   pointBonusRate: number;
+  // skillUpperRate is the coarse context-free bound; the following fields cover mixed / same-band / same-attribute contexts.
   skillUpperRate: number;
   skillAverageRate: number;
   skillLeaderRate: number;
@@ -239,7 +246,8 @@ export type SearchCard = CalculatedBandoriCard & {
   skillSearchSignature: string;
 };
 
-export type SearchCardSkillRateProfile = Pick<SearchCard,
+export type SearchCardSkillRateProfile = Pick<
+  SearchCard,
   | "skillUpperRate"
   | "skillAverageRate"
   | "skillLeaderRate"
@@ -266,17 +274,36 @@ export type SearchConfiguration = {
   seedTargetValue: number;
   rootScoreUpperBound: number;
   rootTargetUpperBound: number;
+  // Large-pool searches partition by skill context so conditional skills can use tighter bounds.
   skillContextUpperMode?: SkillContextUpperMode;
 };
 
-export type SearchScope = { searchCards: SearchCard[]; skillContextUpperMode?: SkillContextUpperMode };
-export type SearchCardGroup = { characterId: number; characterIndex: number; startIndex: number; cards: SearchCard[] };
-export type SupportBandCandidate = { card: CalculatedBandoriCard; supportPower: number };
-export type SupportBandSelection = { supportBandPower: number; supportCards: SupportBandCandidate[] };
+export type SearchScope = {
+  searchCards: SearchCard[];
+  skillContextUpperMode?: SkillContextUpperMode;
+};
+
+export type SearchCardGroup = {
+  characterId: number;
+  characterIndex: number;
+  startIndex: number;
+  cards: SearchCard[];
+};
+
+export type SupportBandCandidate = {
+  card: CalculatedBandoriCard;
+  supportPower: number;
+};
+
+export type SupportBandSelection = {
+  supportBandPower: number;
+  supportCards: SupportBandCandidate[];
+};
 
 export type SupportBandContext = {
   enabled: boolean;
   candidates: SupportBandCandidate[];
+  // Mission live support excludes main-team cards and duplicate characters; this keeps each card's opportunity cost.
   supportPowerByCardKey: Map<string, number>;
   supportBandPowerUpperBound: number;
   supportBandPointUpperBound: number;
@@ -310,7 +337,12 @@ export type SearchObjectiveAdapter = {
   compressionDominates: (left: SearchCard, right: SearchCard) => boolean;
   getTraversalValue: (card: SearchCard, baseScoreRatePerPower: number) => number;
   getSeedTeamSortValue: (cards: SearchCard[]) => number;
-  estimateTargetUpperBound: (scoreUpperBound: number, pointBonusRateUpper: number, input: BandoriTeamSearchInput, scoreRateUpper?: number) => number;
+  estimateTargetUpperBound: (
+    scoreUpperBound: number,
+    pointBonusRateUpper: number,
+    input: BandoriTeamSearchInput,
+    scoreRateUpper?: number,
+  ) => number;
 };
 
 export type CharacterUpperBoundIndex = {
@@ -318,6 +350,8 @@ export type CharacterUpperBoundIndex = {
   characterIndexById: Map<number, number>;
   characterBandIds: Array<number | null>;
   bandIds: number[];
+  // Each startIndex stores suffix bounds for the best contribution each character can still provide.
+  // DFS excludes already selected characters with a mask, then takes the top remaining characters.
   powerByStartIndex: Float64Array[];
   pointBonusRateByStartIndex: Float64Array[];
   skillAverageRateByStartIndex: Float64Array[];
@@ -338,7 +372,12 @@ export type CharacterUpperBoundIndex = {
 };
 
 export type SkillContextUpperMode = "optimistic" | "same-band" | "same-attribute" | "both" | "mixed";
-export type SkillUpperRates = { maxRate: number; averageRate: number; leaderRate: number };
+
+export type SkillUpperRates = {
+  maxRate: number;
+  averageRate: number;
+  leaderRate: number;
+};
 
 export type ScoreCalculationCache = {
   judgeLists?: Map<string, BandoriJudge[]>;
@@ -351,6 +390,24 @@ export type ScoreCalculationCache = {
   resolvedSkills?: Map<string, ResolvedBandoriSkill | null>;
 };
 
-export type PreparedNote = { beat: number; time: number; skill: boolean; fever: boolean };
-export type PreparedChart = { notes: PreparedNote[]; playLevel: number; notesCount: number; skillStartNotes: number[]; skillTriggerTimes: number[] };
-export type ScoreComboOptions = { startCombo?: number; useMedleyCombo?: boolean };
+export type PreparedNote = {
+  beat: number;
+  time: number;
+  skill: boolean;
+  fever: boolean;
+};
+
+export type PreparedChart = {
+  // Notes are sorted in judgment order; long and slide notes are expanded into scoring endpoints.
+  notes: PreparedNote[];
+  playLevel: number;
+  notesCount: number;
+  // The first 5 entries are normal trigger windows; the 6th is the leader/encore window.
+  skillStartNotes: number[];
+  skillTriggerTimes: number[];
+};
+
+export type ScoreComboOptions = {
+  startCombo?: number;
+  useMedleyCombo?: boolean;
+};
