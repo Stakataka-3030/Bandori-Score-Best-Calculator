@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import "./card-thumb.css";
 
 const SERVER_CODES = ["jp", "en", "tw", "cn"] as const;
 
