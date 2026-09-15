@@ -1,0 +1,46 @@
+name: Apply native Medley UI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/patch-medley-ui.mjs"
+      - ".github/workflows/apply-medley-ui.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-medley-ui-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Apply Medley UI patch
+        run: node scripts/patch-medley-ui.mjs
+      - name: Build web frontend
+        run: npm run build
+      - name: Commit tested UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add src/App.tsx src/styles.css
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "Medley UI already applied."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Wire native Medley search into desktop UI"
+          git pull --rebase origin main
+          git push origin HEAD:main
