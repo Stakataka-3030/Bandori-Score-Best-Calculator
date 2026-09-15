@@ -13,6 +13,10 @@ on:
       - "vite.config.ts"
       - ".github/workflows/macos-test-build.yml"
 
+concurrency:
+  group: macos-test-build-main
+  cancel-in-progress: true
+
 jobs:
   build-macos-arm64:
     runs-on: macos-15
