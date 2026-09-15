@@ -37,6 +37,7 @@ jobs:
           name: Bandori-Score-Best-Calculator-windows-x64
           if-no-files-found: error
           retention-days: 14
+          # Keep both the raw executable and the NSIS installer for manual smoke tests.
           path: |
             target/release/bandori-score-best-calculator.exe
             target/release/bundle/nsis/*.exe
