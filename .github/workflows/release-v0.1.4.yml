@@ -1,0 +1,240 @@
+name: Release v0.1.4
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-v0.1.4.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-v0.1.4
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: v0.1.4
+  RELEASE_VERSION: 0.1.4
+
+jobs:
+  preflight:
+    name: Verify release metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify version metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'EOF'
+          import { readFileSync } from 'node:fs';
+          const expected = process.env.RELEASE_VERSION;
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          const tauri = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+          const cargo = readFileSync('src-tauri/Cargo.toml', 'utf8');
+          const cargoVersion = cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+          for (const [name, value] of [
+            ['package.json', pkg.version],
+            ['src-tauri/tauri.conf.json', tauri.version],
+            ['src-tauri/Cargo.toml', cargoVersion],
+          ]) {
+            if (value !== expected) {
+              throw new Error(`${name} version ${value ?? '<missing>'} != ${expected}`);
+            }
+          }
+          console.log(`Release metadata verified at ${expected}`);
+          EOF
+      - name: Install dependencies
+        run: npm install --package-lock=false
+      - name: Verify regressions and frontend build
+        run: npm run build
+
+  windows-x64:
+    name: Windows x64
+    needs: preflight
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: npm install --package-lock=false
+      - name: Build Windows NSIS package
+        run: npm run tauri:build -- --bundles nsis
+      - name: Stage Windows release files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          $raw = Get-ChildItem -Path . -Recurse -File -Filter 'bandori-score-best-calculator.exe' |
+            Where-Object { $_.FullName -match '[\\/]target[\\/]release[\\/]bandori-score-best-calculator\.exe$' } |
+            Select-Object -First 1
+          if (-not $raw) { throw 'Raw Windows executable not found' }
+          $installer = Get-ChildItem -Path . -Recurse -File -Filter '*.exe' |
+            Where-Object { $_.FullName -match '[\\/]release[\\/]bundle[\\/]nsis[\\/]' } |
+            Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer not found' }
+          Copy-Item $raw.FullName "release-assets/Bandori-Score-Best-Calculator-v$env:RELEASE_VERSION-windows-x64-portable.exe"
+          Copy-Item $installer.FullName "release-assets/Bandori-Score-Best-Calculator-v$env:RELEASE_VERSION-windows-x64-setup.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-x64
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  macos-arm64:
+    name: macOS Apple Silicon
+    needs: preflight
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: npm install --package-lock=false
+      - name: Build macOS app bundle
+        run: npm run tauri:build -- --bundles app
+      - name: Ad-hoc sign and stage macOS release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          APP_PATH="$(find . -path '*/release/bundle/macos/*.app' -print -quit)"
+          if [[ -z "$APP_PATH" ]]; then
+            echo 'No macOS .app bundle found' >&2
+            exit 1
+          fi
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" \
+            "release-assets/Bandori-Score-Best-Calculator-v${RELEASE_VERSION}-macOS-arm64.app.zip"
+          hdiutil create \
+            -volname "Bandori Score Best Calculator" \
+            -srcfolder "$APP_PATH" \
+            -ov \
+            -format UDZO \
+            "release-assets/Bandori-Score-Best-Calculator-v${RELEASE_VERSION}-macOS-arm64.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-arm64
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-x64:
+    name: Linux x64
+    needs: preflight
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux Tauri dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Install dependencies
+        run: npm install --package-lock=false
+      - name: Build Linux packages
+        run: npm run tauri:build -- --bundles deb,appimage
+      - name: Stage Linux release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          DEB_PATH="$(find . -path '*/release/bundle/deb/*.deb' -print -quit)"
+          APPIMAGE_PATH="$(find . -path '*/release/bundle/appimage/*.AppImage' -print -quit)"
+          if [[ -z "$DEB_PATH" || -z "$APPIMAGE_PATH" ]]; then
+            echo "Linux bundle missing: deb='$DEB_PATH' appimage='$APPIMAGE_PATH'" >&2
+            exit 1
+          fi
+          cp "$DEB_PATH" "release-assets/Bandori-Score-Best-Calculator-v${RELEASE_VERSION}-linux-x64.deb"
+          cp "$APPIMAGE_PATH" "release-assets/Bandori-Score-Best-Calculator-v${RELEASE_VERSION}-linux-x64.AppImage"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-x64
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [windows-x64, macos-arm64, linux-x64]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Add license, notices, and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp LICENSE release-assets/LICENSE.txt
+          cp NOTICE.md release-assets/NOTICE.md
+          (
+            cd release-assets
+            sha256sum \
+              Bandori-Score-Best-Calculator-v${RELEASE_VERSION}-windows-x64-portable.exe \
+              Bandori-Score-Best-Calculator-v${RELEASE_VERSION}-windows-x64-setup.exe \
+              Bandori-Score-Best-Calculator-v${RELEASE_VERSION}-macOS-arm64.app.zip \
+              Bandori-Score-Best-Calculator-v${RELEASE_VERSION}-macOS-arm64.dmg \
+              Bandori-Score-Best-Calculator-v${RELEASE_VERSION}-linux-x64.deb \
+              Bandori-Score-Best-Calculator-v${RELEASE_VERSION}-linux-x64.AppImage \
+              > SHA256SUMS.txt
+          )
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > release-notes.md <<'EOF'
+          ## Bandori Score Best Calculator v0.1.4
+
+          Maintenance release following v0.1.3.
+
+          Changes:
+          - Added event-song shortcuts for issue #1: after selecting an event, the client reads the selected server's Bestdori event detail and lists its challenge/event songs directly in the search form. Click a song to switch to it without copying the title from Bestdori/HHWX.
+          - Event-song lookup is server-specific and deliberately does not fall back to JP, avoiding misleading song suggestions when the selected server has no matching event-song data.
+          - Clarified the existing score objective: team search already ranks by weighted expected score, using the real 1024 RNG shuffle paths (96 reachable weighted orders) and evaluating all 5! initial layouts/leader placements. Theoretical maximum/minimum and maximum-score probability remain supplementary result metrics.
+          - Release metadata is now checked for consistency across package.json, Tauri configuration, and the Rust crate before packaging.
+
+          Packages:
+          - Windows x64 portable executable and NSIS installer.
+          - macOS Apple Silicon `.app.zip` and `.dmg`.
+          - Linux x64 `.deb` and AppImage.
+
+          Notes:
+          - Windows binaries are currently unsigned and may trigger SmartScreen warnings.
+          - macOS packages are ad-hoc signed but not Apple-notarized, so Gatekeeper may require manual approval on first launch.
+          - The Linux AppImage may require FUSE support depending on distribution; the `.deb` package is also provided.
+          - SHA-256 hashes are included in `SHA256SUMS.txt`.
+          EOF
+      - name: Create or update release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber
+            gh release edit "$RELEASE_TAG" --title "Bandori Score Best Calculator ${RELEASE_TAG}" --notes-file release-notes.md
+          else
+            gh release create "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --title "Bandori Score Best Calculator ${RELEASE_TAG}" \
+              --notes-file release-notes.md \
+              release-assets/*
+          fi
