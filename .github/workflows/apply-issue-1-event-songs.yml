@@ -1,0 +1,49 @@
+name: Apply issue 1 event-song shortcuts
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/apply-issue-1-event-songs.mjs"
+      - ".github/workflows/apply-issue-1-event-songs.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-issue-1-event-songs-main
+  cancel-in-progress: true
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply issue 1 patch
+        run: node scripts/apply-issue-1-event-songs.mjs
+      - name: Install dependencies
+        run: npm install --package-lock=false
+      - name: Verify regressions and frontend build
+        run: npm run build
+      - name: Commit tested issue 1 changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed_paths=(src/App.tsx src/data/bestdori-provider.ts)
+          if [[ -z "$(git status --porcelain -- "${changed_paths[@]}")" ]]; then
+            echo "Issue #1 event-song shortcuts already applied."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${changed_paths[@]}"
+          git commit -m "Add event-song shortcuts for issue #1"
+          git pull --rebase origin main
+          git push origin HEAD:main
