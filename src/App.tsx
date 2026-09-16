@@ -14,6 +14,7 @@ import {
   createBandoriSearchInput,
   createMedleySearchInput,
   eventTypeFromBestdori,
+  fetchBestdoriEventMusicIds,
   loadCurrentGameData,
   syncBestdoriMasters,
   syncBestdoriMastersIfStale,
@@ -148,6 +149,7 @@ export default function App() {
   const [medleyDifficulty2, setMedleyDifficulty2] = useState<BandoriTeamSearchDifficulty>("expert");
   const [medleyDifficulty3, setMedleyDifficulty3] = useState<BandoriTeamSearchDifficulty>("expert");
   const [eventId, setEventId] = useState<number | null>(null);
+  const [eventMusicIds, setEventMusicIds] = useState<number[]>([]);
   const [liveType, setLiveType] = useState<BandoriTeamSearchLiveType>("free");
   const [target, setTarget] = useState<BandoriTeamSearchTarget>("score");
   const [perfectRatePercent, setPerfectRatePercent] = useState(100);
@@ -168,6 +170,7 @@ export default function App() {
   const server = profile?.profile.server ?? 3;
   const songs = useMemo(() => buildSongOptions(gameData, server), [gameData, server]);
   const events = useMemo(() => buildEventOptions(gameData, server), [gameData, server]);
+  const songLabelsById = useMemo(() => new Map(songs.map((song) => [song.id, song.label])), [songs]);
   const availableDifficulties = useMemo(() => getAvailableDifficulties(gameData, songId), [gameData, songId]);
   const medleyDifficulties2 = useMemo(() => getAvailableDifficulties(gameData, medleySong2Id), [gameData, medleySong2Id]);
   const medleyDifficulties3 = useMemo(() => getAvailableDifficulties(gameData, medleySong3Id), [gameData, medleySong3Id]);
@@ -177,6 +180,30 @@ export default function App() {
     return eventTypeFromBestdori(isRecord(rawEvent) ? rawEvent.eventType : null);
   }, [eventId, gameData]);
   const allowedLiveTypes = useMemo(() => allowedLiveTypesForEvent(selectedEventType), [selectedEventType]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (eventId === null) {
+      setEventMusicIds([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setEventMusicIds([]);
+    void fetchBestdoriEventMusicIds(eventId, server)
+      .then((musicIds) => {
+        if (!cancelled) setEventMusicIds(musicIds);
+      })
+      .catch((cause) => {
+        console.warn(`Failed to load Bestdori event songs for event ${eventId}`, cause);
+        if (!cancelled) setEventMusicIds([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [eventId, server]);
 
   useEffect(() => {
     let cancelled = false;
@@ -568,6 +595,24 @@ export default function App() {
                   disabled={!gameData}
                 />
               </label>
+
+              {eventMusicIds.length > 0 && (
+                <div className="field field-wide">
+                  <span>活动课题曲</span>
+                  <div className="summary-row" aria-label="当前活动课题曲">
+                    {eventMusicIds.map((musicId) => (
+                      <button
+                        key={musicId}
+                        type="button"
+                        className={songId === musicId ? "primary-button" : "ghost-button"}
+                        onClick={() => setSongId(musicId)}
+                      >
+                        {songLabelsById.get(musicId) ?? `Song #${musicId}`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <label className="field">
                 <span>活动类型</span>

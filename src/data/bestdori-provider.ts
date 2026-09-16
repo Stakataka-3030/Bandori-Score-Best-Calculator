@@ -119,6 +119,44 @@ export async function fetchBestdoriMaster(
   };
 }
 
+export async function fetchBestdoriEventMusicIds(
+  eventId: number,
+  server: number,
+): Promise<number[]> {
+  if (!Number.isSafeInteger(eventId) || eventId <= 0) {
+    throw new Error(`Invalid eventId: ${eventId}`);
+  }
+  if (!Number.isSafeInteger(server) || server < 0) {
+    throw new Error(`Invalid server: ${server}`);
+  }
+
+  const url = `${BESTDORI_BASE_URL}/api/events/${eventId}.json`;
+  const rawText = await fetchText(url);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    throw new Error(`Bestdori event ${eventId} returned invalid JSON`);
+  }
+  if (!isRecord(parsed)) {
+    throw new Error(`Bestdori event ${eventId} payload is not an object`);
+  }
+
+  // Event details store challenge/event songs by server. Do not fall back to JP here:
+  // a missing regional list should not silently offer songs from a different server.
+  const regionalMusics = Array.isArray(parsed.musics) ? parsed.musics[server] : null;
+  if (!Array.isArray(regionalMusics)) {
+    return [];
+  }
+
+  const musicIds = regionalMusics.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    const musicId = typeof entry.musicId === "number" ? entry.musicId : Number(entry.musicId);
+    return Number.isSafeInteger(musicId) && musicId > 0 ? [musicId] : [];
+  });
+  return [...new Set(musicIds)];
+}
+
 export async function fetchBestdoriChart(
   songId: number,
   difficulty: number,
