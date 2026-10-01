@@ -62,4 +62,13 @@ sₖ = max(tₖ, sₖ₋₁ + dₖ₋₁ + 0.75)
 - 原 HHWX 代码 Copyright (c) 2026 BluewaterAlnilamII
 - HHWX 使用 GNU Affero General Public License v3.0 only
 
-本仓库保留适用的 AGPL 许可与来源说明。更详细的第三方说明见 `NOTICE.md`。
+本仓库保留适用的 AGPL 许可与来源说明。更详细的第三方说明见 [NOTICE.md](NOTICE.md)，许可全文见 [LICENSE](LICENSE)。
+
+## 开发与文档
+
+从源码构建、测试命令、原生环境要求见 [开发指南](docs/development.md)。
+
+- [架构与上游代码说明](docs/architecture.md)
+- [技能触发延迟影响的歌曲](docs/skill-trigger-delay-affected-songs.md)
+- [维护脚本与历史补丁索引](docs/maintenance-scripts.md)
+- Medley 模块：[输入模型](crates/bandori-medley-model/README.md)、[参考算分器](crates/bandori-medley-reference/README.md)、[搜索器](crates/bandori-medley-search/README.md)

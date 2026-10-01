@@ -3,7 +3,8 @@ dist/
 .DS_Store
 *.log
 
-# Rust/Tauri build output
+# Rust workspace and Tauri build output
+/target/
 src-tauri/target/
 
 # Generated from src-tauri/app-icon.svg by `npm run icons`.

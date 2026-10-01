@@ -16,4 +16,4 @@ The scoring rule identifier is `hhwx-medley-bestdori-v4`. Potential and combined
 
 The model deliberately excludes raw UI state, profiles, master records, search limits, pruning settings and network behavior. The TypeScript adapter under `src/lib/bandori/medley-foundation/` owns profile/master decoding and produces this fixed contract.
 
-See [Bandori Medley Team Builder: Rules and Scoring](../../documents/bandori-team-builder/medley-foundation.md) for the formulas and source-data rules. The tiny fixture under `tests/fixtures/` verifies the complete JSON boundary without requiring roster search.
+See the local [architecture and upstream map](../../docs/architecture.md), [input types](src/input.rs), and [validation rules](src/validation.rs) for the source-data boundary. The tiny fixture under `tests/fixtures/` verifies the complete JSON boundary without requiring roster search. Test commands are in the [development guide](../../docs/development.md).
