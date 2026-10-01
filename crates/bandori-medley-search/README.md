@@ -17,12 +17,12 @@ The discovered list contains at most ten complete solutions encountered during s
 
 ## Scoring and search
 
-Production scoring prepares chart boundaries once, reuses independently rounded skill-window extras and reduces the 120-order average algebraically. It floors each song before comparison and before summing the medley, and is checked bit-for-bit against the direct reference scorer.
+Production scoring prepares chart boundaries once, reuses independently rounded skill-window extras and uses the weighted real-shuffle distribution over 1024 random-choice paths (96 reachable orders), including legal initial team-slot layouts. It floors each song before comparison and before summing the medley, and is checked bit-for-bit against the direct reference scorer.
 
 Search combines single-team upper bounds, a joint three-team allocation bound, forward/backward conditional tables, reversible card destinations and exact enumeration of small residual blocks. Numeric uncertainty or insufficient optimization memory disables the affected pruning work rather than removing a candidate. Tiny searches are checked against an independent exhaustive reference calculation.
 
 The configured storage budget covers local rows and indexes, score-cache capacity, joint workspace reservations and live conditional tables. Input/model data, ranked single-team indexes, traversal state and chart-sized scorer scratch are accounted separately. Exhaustive correctness does not depend on any cache entry surviving.
 
-The browser binding in `bandori-medley-wasm` runs search, reports strict incumbent improvements and hydrates the retained solutions. The Team Builder Web Worker owns the deadline, progress throttling and mapping to frontend display objects.
+This repository uses a native Tauri binding in [src-tauri/src/lib.rs](../../src-tauri/src/lib.rs), called by [src/search/run-medley-search.ts](../../src/search/run-medley-search.ts), to run Medley search and hydrate retained solutions. There is no `bandori-medley-wasm` crate in this repository.
 
-See [Bandori Medley Exact Search](../../documents/bandori-team-builder/medley-search.md) for the full proof and [Bandori Medley Testing and Verification](../../documents/bandori-team-builder/medley-testing.md) for runnable checks and private-regression boundaries.
+See the local [architecture and upstream map](../../docs/architecture.md), [tiny exact-search regression tests](tests/tiny_exact_search.rs), and [development guide](../../docs/development.md). The upstream `documents/bandori-team-builder/` pages are not included in this repository.
