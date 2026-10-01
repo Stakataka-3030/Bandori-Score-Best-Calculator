@@ -2,6 +2,9 @@ name: macOS Apple Silicon test build
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/macos-test-build.yml"
   push:
     branches: [main]
     paths:
@@ -14,7 +17,7 @@ on:
       - ".github/workflows/macos-test-build.yml"
 
 concurrency:
-  group: macos-test-build-main
+  group: macos-test-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -44,7 +47,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APP_PATH="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          APP_PATH="$(find target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
           if [[ -z "$APP_PATH" ]]; then
             echo "No macOS .app bundle found" >&2
             exit 1
